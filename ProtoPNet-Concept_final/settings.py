@@ -34,10 +34,10 @@ spstr = 'hardsparse' if hard_sparse else 'softsparse'
 capstr = 'cap' if use_cap else 'nocap'
 lstr = 'l2' if ltwo else 'hs'
 
-data_path =  ''# where you save the data
-train_dir = data_path + 'train_cropped_augmented/'
-test_dir = data_path + 'test_cropped/'
-train_push_dir = data_path + 'train_cropped/'
+data_path = '/media/wlodder/T9/Datasets/Experiments/XAI/Military_MARVEL/train_cropped_augmented/'# where you save the data
+train_dir = data_path + '/data'
+test_dir = data_path + '/data'
+train_push_dir = data_path + '/data'
 if debug: 
     train_batch_size = 5
     test_batch_size = 5

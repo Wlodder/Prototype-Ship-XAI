@@ -107,7 +107,10 @@ def local_analysis(imgs, model_multi, proto_info_dir, vis_count,
     print('the given slosts by prediction')
     slots= np.argwhere(protoprec_pred)[:,1]
     print(slots)
-    llw = model_multi.module.last_layer.weight.reshape(200, 200, 10)
+    print(model_multi.module.last_layer.weight.size())
+
+    # Reshape to num_classes x num_classes x num_prototypes
+    llw = model_multi.module.last_layer.weight.reshape(8, 8, 10)
     prototype_img_filename_prefix='prototype-img'
     for idx, i in enumerate(identity):
         # check if there is visualization for given prototypes
@@ -179,6 +182,7 @@ def local_analysis(imgs, model_multi, proto_info_dir, vis_count,
                                         'prototype_activation_map_by_top-%d_prototype.png' % (idx+1)),
                         overlayed_img, vmin = 0.0 , vmax = 1.0)
             except:
+                print('something went wrong')
                 pass
     ##### PROTOTYPES FROM TOP-k CLASSES
     k = 5
@@ -252,7 +256,9 @@ def local_analysis(imgs, model_multi, proto_info_dir, vis_count,
                     plt.imsave(os.path.join(topk_dir,
                                             'prototype_activation_map_by_top-%d_class.png'%(idx)),
                             overlayed_img, vmin = 0.0 , vmax = 1.0)
-                except:
+                except :
+                    print('something went wrong')
+
                     pass
     return None 
 
@@ -420,7 +426,35 @@ def analyze(opt: Optional[List[str]]) -> None:
             tst_acc = tst_acc.item() / total
             print('The testing accuracy of the given model is:',tst_acc)
     # just an example, I leave this in for easier modification to run analysis on all the images 
-    img_list = ['009.Brewer_Blackbird/Brewer_Blackbird_0004_2345.jpg']
+
+    img_list = [ 
+        "1/1108353.jpg",
+        "1/1181194.jpg",
+        "1/1205939.jpg",
+        "1/1236335.jpg",
+        "1/1378820.jpg",
+        "1/1412443.jpg",
+        "1/151047.jpg",
+        "1/1518694.jpg",
+        "1/1537541.jpg",
+        "1/1555070.jpg",
+        "1/1571774.jpg",
+        "1/1601534.jpg",
+        "1/1657914.jpg",
+        "1/178777.jpg",
+        "1/1792510.jpg",
+        "1/1797868.jpg",
+        "1/1823162.jpg",
+        "1/1904040.jpg",
+        "1/198059.jpg",
+        "1/2027464.jpg",
+        "1/2063424.jpg",
+        "1/211015.jpg",
+        "1/2182948.jpg",
+        "1/2237203.jpg",
+        "1/2320948.jpg",
+    ]
+
     save_analysis_dir = args.save_analysis_dir
     for img in img_list:
         # note that there are images that are only in gray scale from the test-set. 

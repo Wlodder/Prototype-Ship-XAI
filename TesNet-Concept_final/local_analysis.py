@@ -212,7 +212,7 @@ def analyze(opt: Optional[List[str]]) -> None:
                                  std=std)
     # load the test data and check test accuracy
     # cap analysis set (push with normalize)
-    from settings_CUB import train_dir, test_dir, train_push_dir, \
+    from settings_MMarvel import train_dir, test_dir, train_push_dir, \
                      train_batch_size, test_batch_size, train_push_batch_size
     train_push_batch_size = 50
     ##### SANITY CHECK
@@ -266,10 +266,38 @@ def analyze(opt: Optional[List[str]]) -> None:
         
     ##################
     #["068.Ruby_throated_Hummingbird/Ruby_Throated_Hummingbird_0131_57813.jpg"]
-    list2 = ['074.Florida_Jay/Florida_Jay_0012_64887.jpg',
-              '149.Brown_Thrasher/Brown_Thrasher_0042_155213.jpg',
-              '186.Cedar_Waxwing/Cedar_Waxwing_0001_179170.jpg',
-              '165.Chestnut_sided_Warbler/Chestnut_Sided_Warbler_0008_164001.jpg']
+    list2 = [ 
+        "1/1108353.jpg",
+        "1/1181194.jpg",
+        "1/1205939.jpg",
+        "1/1236335.jpg",
+        "1/1378820.jpg",
+        "1/1412443.jpg",
+        "1/151047.jpg",
+        "1/1518694.jpg",
+        "1/1537541.jpg",
+        "1/1555070.jpg",
+        "1/1571774.jpg",
+        "1/1601534.jpg",
+        "1/1657914.jpg",
+        "1/178777.jpg",
+        "1/1792510.jpg",
+        "1/1797868.jpg",
+        "1/1823162.jpg",
+        "1/1904040.jpg",
+        "1/198059.jpg",
+        "1/2027464.jpg",
+        "1/2063424.jpg",
+        "1/211015.jpg",
+        "1/2182948.jpg",
+        "1/2237203.jpg",
+        "1/2320948.jpg",
+    ]
+    # list2 = ['074.Florida_Jay/Florida_Jay_0012_64887.jpg',
+    #           '149.Brown_Thrasher/Brown_Thrasher_0042_155213.jpg',
+    #           '186.Cedar_Waxwing/Cedar_Waxwing_0001_179170.jpg',
+            #   '165.Chestnut_sided_Warbler/Chestnut_Sided_Warbler_0008_164001.jpg']
+    count = 0
     for name in list2:
         local_analysis(name, ppnet_multi,
                         protoc_info, 

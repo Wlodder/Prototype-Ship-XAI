@@ -1,4 +1,5 @@
 import os
+from PIL import Image
 import shutil
 import torch.utils.data
 # import torch.utils.data.distributed
@@ -12,7 +13,9 @@ import push, model_cap, train_and_test_cap as tnt
 from util import save
 from util.log import create_logger
 from util.preprocess import mean, std, preprocess_input_function
+from MMarvel_Dataset import MARVEL_MILITARY
 import settings_CUB
+import settings_MMarvel 
 import vis_caps
 
 parser = argparse.ArgumentParser()
@@ -56,6 +59,36 @@ if dataset_name == "CUB":
     analysis_start = settings_CUB.analysis_start
     cap_width = settings_CUB.cap_width
     k = settings_CUB.k
+elif dataset_name == 'MMarvel': 
+    num_classes = settings_MMarvel.num_classes
+    img_size = settings_MMarvel.img_size
+    add_on_layers_type = settings_MMarvel.add_on_layers_type
+    prototype_shape = settings_MMarvel.prototype_shape
+    prototype_activation_function = settings_MMarvel.prototype_activation_function
+    base_architecture = settings_MMarvel.base_architecture
+    #datasets
+    train_dir = settings_MMarvel.train_dir
+    test_dir = settings_MMarvel.test_dir
+    train_push_dir = settings_MMarvel.train_push_dir
+    train_batch_size = settings_MMarvel.train_batch_size
+    test_batch_size = settings_MMarvel.test_batch_size
+    train_push_batch_size = settings_MMarvel.train_push_batch_size
+    #optimzer
+    joint_optimizer_lrs = settings_MMarvel.joint_optimizer_lrs
+    joint_lr_step_size = settings_MMarvel.joint_lr_step_size
+    warm_optimizer_lrs = settings_MMarvel.warm_optimizer_lrs
+    last_layer_optimizer_lr = settings_MMarvel.last_layer_optimizer_lr
+    # weighting of different training losses
+    coefs = settings_MMarvel.coefs
+    # number of training epochs, number of warm epochs, push start epoch, push epochs
+    num_train_epochs = settings_MMarvel.num_train_epochs
+    num_warm_epochs = settings_MMarvel.num_warm_epochs
+    push_start = settings_MMarvel.push_start
+    push_epochs = settings_MMarvel.push_epochs
+    # input for caps
+    analysis_start = settings_MMarvel.analysis_start
+    cap_width = settings_MMarvel.cap_width
+    k = settings_MMarvel.k
 else:
     raise Exception("there are no settings file of datasets {}".format(dataset_name))
 base_architecture_type = re.match('^[a-z]*', base_architecture).group(0)
@@ -82,16 +115,51 @@ print('The cap coef is:', coefs['cap_coef'])
 
 # all datasets
 # train set
-train_dataset = datasets.ImageFolder(
-    train_dir,
-    transforms.Compose([
-        transforms.Resize(size=(img_size, img_size)),
-        transforms.ToTensor(),
-        normalize,
-    ]))
+
+train_transformation = transforms.Compose([
+    transforms.ToTensor(),
+    transforms.Resize(size=(img_size, img_size)),
+    transforms.RandomHorizontalFlip(),
+    transforms.RandomRotation(15),
+    transforms.ColorJitter(brightness=0.1, contrast=0.1, saturation=0.1, hue=0),
+    normalize,
+])
+
+# train_transformation = transforms.Compose([
+#     transforms.Resize(size=(img_size, img_size)),
+#         transforms.RandomHorizontalFlip(),
+#         transforms.RandomRotation(15),
+#         transforms.ColorJitter(brightness=0.1, contrast=0.1, saturation=0.1, hue=0),
+#     normalize
+# ])
+def check_Image(path):
+  try:
+    im = Image.open(path)
+    return True
+  except:
+    return False
+
+test_transformation = transforms.Compose([
+    transforms.ToTensor(),
+    transforms.Resize(size=(img_size, img_size)),
+    transforms.RandomHorizontalFlip(),
+    normalize,
+])
+
+## Need to change for making adaptable to Military Marvel
+# train_dataset = datasets.ImageFolder(
+#     train_dir,
+#     transforms.Compose([
+#         transforms.Resize(size=(img_size, img_size)),
+#         transforms.ToTensor(),
+#         normalize,
+#     ]))
+# train_dataset = MARVEL_MILITARY(base_path=train_dir, train=True, transform=train_transformation)
+train_dataset = datasets.ImageFolder(train_dir, train_transformation)
 train_loader = torch.utils.data.DataLoader(
     train_dataset, batch_size=train_batch_size, shuffle=True,
     num_workers=2, pin_memory=False)
+
 # push set
 train_push_dataset = datasets.ImageFolder(
     train_push_dir,
@@ -99,17 +167,12 @@ train_push_dataset = datasets.ImageFolder(
         transforms.Resize(size=(img_size, img_size)),
         transforms.ToTensor(),
     ]))
+
 train_push_loader = torch.utils.data.DataLoader(
     train_push_dataset, batch_size=train_push_batch_size, shuffle=False,
     num_workers=2, pin_memory=False)
 # test set
-test_dataset = datasets.ImageFolder(
-    test_dir,
-    transforms.Compose([
-        transforms.Resize(size=(img_size, img_size)),
-        transforms.ToTensor(),
-        normalize,
-    ]))
+test_dataset = datasets.ImageFolder(test_dir, test_transformation)
 test_loader = torch.utils.data.DataLoader(
     test_dataset, batch_size=test_batch_size, shuffle=False,
     num_workers=2, pin_memory=False)
