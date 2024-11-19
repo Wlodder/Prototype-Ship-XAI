@@ -9,9 +9,15 @@ import torch
 from torch.utils.tensorboard import SummaryWriter
 from torchvision import transforms, datasets
 
+import os
+import sys
+# Adding the utils to the path to be found
+
+sys.path.append(os.environ['PACKAGE_PATH'])
+
+from joint.data.datasets import create_datasets
 from model_cap_final import Protopool_cap
 from utils import mixup_data, find_high_activation_crop
-import os
 import matplotlib.pyplot as plt
 import cv2
 
@@ -145,38 +151,34 @@ def learn_model(opt: Optional[List[str]]) -> None:
         torch.cuda.manual_seed(args.seed)
         kwargs.update({'num_workers': 2, 'pin_memory': True})
 
-    transforms_train_test = transforms.Compose([
-        transforms.Resize((224, 224)),
-        transforms.ToTensor(),
-        transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
-    ])
-    transforms_analy = transforms.Compose([
-        transforms.Resize((224, 224)),
-        transforms.ToTensor(),
-    ])
-    train_dataset = datasets.ImageFolder(
-        args.data_train,
-        transforms_train_test,
-    )
+    # transforms_train_test = transforms.Compose([
+    #     transforms.Resize((224, 224)),
+    #     transforms.ToTensor(),
+    #     transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
+    # ])
+    # transforms_analy = transforms.Compose([
+    #     transforms.Resize((224, 224)),
+    #     transforms.ToTensor(),
+    # ])
+    # Create datasets
+    train_dataset, test_dataset, push_dataset = create_datasets()
+
+
+
+    # Create dataloaders
     train_loader = torch.utils.data.DataLoader(
         train_dataset, batch_size=args.batch_size, shuffle=True, drop_last=args.drop_last,
         **kwargs)
 
-    test_dataset = datasets.ImageFolder(
-        args.data_test,
-        transforms_train_test,
-    )
     test_loader = torch.utils.data.DataLoader(
         test_dataset, batch_size=args.batch_size, shuffle=False, drop_last=False,
         **kwargs)
     
-    # added caps with 
-    caps_anal_dataset = datasets.ImageFolder(
-        args.data_push,transforms_analy)
 
     caps_anal_loader = torch.utils.data.DataLoader(
-        caps_anal_dataset, batch_size=args.batch_size, shuffle=False,
+        push_dataset, batch_size=args.batch_size, shuffle=False,
         num_workers=2, pin_memory=False)
+
     print('Architecture:', args.arch)
     print('top-k cluster loss with k:',top_k)
     print('train cap with new arch')

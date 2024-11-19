@@ -52,9 +52,14 @@ def update_prototypes_on_batch(search_batch_input,
         search_batch = search_batch_input
 
     with torch.no_grad():
+        # Send input to GPU
+
         search_batch = search_batch.cuda()
         # this computation currently is not parallelized
+        # Get the model output
         proto_act_torch, cap_factor_torch = prototype_network_parallel(search_batch,vis_cap=True)
+
+        # Get maximum vector norm
         max_act_l2 = prototype_network_parallel.module.max_act_l2
         if torch.max(cap_factor_torch) >= max_act_l2: 
             print('Warning: Maximum cap factor exceeds maximum possible activation')
@@ -68,8 +73,13 @@ def update_prototypes_on_batch(search_batch_input,
             proto_act_correct_class = proto_act_torch * prototypes_of_correct_class
             fully_activated_patches = (proto_act_correct_class > torch.clamp(max_act_l2 - cap_factor_torch, min=0))
 
+    # fully_activated_patches contains the indices of the prototypes that are fully activated
+    # Aka those are the prototypes that are closest the prototypes in terms of cosine similarity
+    # print('fully activated patches: {0}, {1}, {2}'.format(proto_act_torch, max_act_l2, cap_factor_torch))
     proto_act_ = np.copy(proto_act_torch.detach().cpu().numpy())
     full_act_patches_ = np.copy(fully_activated_patches.detach().cpu().numpy())
+
+    # Find the patches that are fully activated
     patches_to_vis = np.argwhere(full_act_patches_)
 
     #del proto_act_torch, cap_factor_torch, max_act_l2,  fully_activated_patches

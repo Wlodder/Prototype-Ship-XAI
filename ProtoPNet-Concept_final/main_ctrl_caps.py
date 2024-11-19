@@ -9,6 +9,14 @@ import torchvision.datasets as datasets
 import vis_caps
 import argparse
 import re
+import os
+import sys
+# Adding the utils to the path to be found
+
+sys.path.append(os.environ['PACKAGE_PATH'])
+
+from joint.data.datasets import create_datasets
+from joint.settings.ProtoPNet_settings_MMarvel import get_args, get_optimizer_coeffs
 from helpers import makedir
 import model_ctrl_caps
 import train_and_test_ctrl_caps as tnt
@@ -16,31 +24,53 @@ import save
 from log import create_logger
 from preprocess import mean, std, preprocess_input_function
 
-parser = argparse.ArgumentParser()
-parser.add_argument('-gpuid', nargs=1, type=str, default='0') # python3 main.py -gpuid=0,1,2,3
-args = parser.parse_args()
+args = get_args().parse_args()
 os.environ['CUDA_VISIBLE_DEVICES'] = args.gpuid[0]
 print(os.environ['CUDA_VISIBLE_DEVICES'])
 
-# book keeping namings and code
-from settings import base_architecture, img_size, prototype_shape, num_classes, \
-                     prototype_activation_function, add_on_layers_type, experiment_run, last_layer_type
+# Extract the optimizer coefficients
+optimizer_stats = get_optimizer_coeffs()
+coefs = optimizer_stats['coefs']
+joint_optimizer_lrs = optimizer_stats['joint_optimizer_lrs']
+warm_optimizer_lrs = optimizer_stats['warm_optimizer_lrs']
+joint_lr_step_size = optimizer_stats['joint_lr_step_size']  
 
-from settings import coefs
+# Parser the arguments
+base_architecture = args.base_architecture
+img_size = args.img_size
+num_classes = args.num_classes
+prototype_activation_function = args.prototype_activation_function
+add_on_layers_type = args.add_on_layers_type
+experiment_run = args.experiment_run
+last_layer_type = args.last_layer_type
 
-# load the data
-from settings import train_dir, test_dir, train_push_dir, \
-                     train_batch_size, test_batch_size, train_push_batch_size
+train_batch_size = args.train_batch_size
+test_batch_size = args.test_batch_size
+train_push_batch_size = args.train_push_batch_size
+model_path = args.model_dir
+
+spstr = 'hardsparse' if args.hard_sparse else 'softsparse'
+capstr = 'cap' if args.use_cap else 'nocap'
+lstr = 'l2' if args.ltwo else 'hs'
+prototype_shape = (args.num_prototypes, args.proto_depth, 1, 1)      
+
+# (Num prototypes, Proto depth,1,1) 
+# if add_on_layers_type == 'none': 
+#     prototype_shape = (2000, 512, 1, 1)
+#     #prototype_shape = (1960, 512, 1, 1)
+    
+# else: 
+#     prototype_shape = (2000, 128, 1, 1)
+#     #prototype_shape = (1960, 128, 1, 1)
 
 base_architecture_type = re.match('^[a-z]*', base_architecture).group(0)
-
-model_dir = './saved_models/' + base_architecture + '/' + experiment_run + '/'
+model_dir = args.model_dir + base_architecture + '/' + experiment_run + '/'
 makedir(model_dir)
-shutil.copy(src=os.path.join(os.getcwd(), __file__), dst=model_dir)
-shutil.copy(src=os.path.join(os.getcwd(), 'settings.py'), dst=model_dir)
-shutil.copy(src=os.path.join(os.getcwd(), base_architecture_type + '_features.py'), dst=model_dir)
-shutil.copy(src=os.path.join(os.getcwd(), 'model_ctrl_caps.py'), dst=model_dir)
-shutil.copy(src=os.path.join(os.getcwd(), 'train_and_test_ctrl_caps.py'), dst=model_dir)
+# shutil.copy(src=os.path.join(os.getcwd(), __file__), dst=model_dir)
+# shutil.copy(src=os.path.join(os.getcwd(), 'settings.py'), dst=model_dir)
+# shutil.copy(src=os.path.join(os.getcwd(), base_architecture_type + '_features.py'), dst=model_dir)
+# shutil.copy(src=os.path.join(os.getcwd(), 'model_ctrl_caps.py'), dst=model_dir)
+# shutil.copy(src=os.path.join(os.getcwd(), 'train_and_test_ctrl_caps.py'), dst=model_dir)
 
 log, logclose = create_logger(log_filename=os.path.join(model_dir, 'train.log'))
 log('base architecture: ' + base_architecture)
@@ -59,35 +89,18 @@ normalize = transforms.Normalize(mean=mean,
                                  std=std)
 
 # all datasets
+train_dataset, test_dataset, caps_push_dataset = create_datasets()
+
+
 # train set
-train_dataset = datasets.ImageFolder(
-    train_dir,
-    transforms.Compose([
-        transforms.Resize(size=(img_size, img_size)),
-        transforms.ToTensor(),
-        normalize,
-    ]))
 train_loader = torch.utils.data.DataLoader(
     train_dataset, batch_size=train_batch_size, shuffle=True,
     num_workers=2, pin_memory=False)
 # push set
-caps_push_dataset = datasets.ImageFolder(
-    train_push_dir,
-    transforms.Compose([
-        transforms.Resize(size=(img_size, img_size)),
-        transforms.ToTensor(),
-    ]))
 caps_push_loader = torch.utils.data.DataLoader(
     caps_push_dataset, batch_size=train_push_batch_size, shuffle=False,
     num_workers=2, pin_memory=False)
 # test set
-test_dataset = datasets.ImageFolder(
-    test_dir,
-    transforms.Compose([
-        transforms.Resize(size=(img_size, img_size)),
-        transforms.ToTensor(),
-        normalize,
-    ]))
 test_loader = torch.utils.data.DataLoader(
     test_dataset, batch_size=test_batch_size, shuffle=False,
     num_workers=2, pin_memory=False)
@@ -116,7 +129,6 @@ ppnet_multi = torch.nn.DataParallel(ppnet)
 class_specific = True
 
 # define optimizer
-from settings import joint_optimizer_lrs, joint_lr_step_size
 joint_optimizer_specs = \
     [{'params': ppnet.features.parameters(), 'lr': joint_optimizer_lrs['features'], 'weight_decay': 1e-3}, # bias are now also being regularized
     {'params': ppnet.add_on_layers.parameters(), 'lr': joint_optimizer_lrs['add_on_layers'], 'weight_decay': 1e-3},
@@ -126,7 +138,6 @@ joint_optimizer_specs = \
 joint_optimizer = torch.optim.Adam(joint_optimizer_specs)
 joint_lr_scheduler = torch.optim.lr_scheduler.StepLR(joint_optimizer, step_size=joint_lr_step_size, gamma=0.1)
 
-from settings import warm_optimizer_lrs 
 
 warm_optimizer_specs = \
     [{'params': ppnet.add_on_layers.parameters(), 'lr': warm_optimizer_lrs['add_on_layers'], 'weight_decay': 1e-3},

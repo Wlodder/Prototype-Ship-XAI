@@ -41,6 +41,7 @@ class TESNet(nn.Module):
         self.num_classes = num_classes
         self.epsilon = 1e-4
         ####### cap unit
+        # The projected circle around each of the prototypes
         self.cap_activation = nn.Softplus()
         self.cap_width_l2 = nn.Parameter(cap_width * torch.ones(1, self.num_prototypes), 
                                         requires_grad=True)
@@ -128,7 +129,7 @@ class TESNet(nn.Module):
             return torch.max(x, val + x - x.detach())
         
     def _cosine_convolution(self, x):
-
+        # Generates an array of angles between the input activation and the prototype vectors
         x = F.normalize(x,p=2,dim=1)
         now_prototype_vectors = F.normalize(self.prototype_vectors,p=2,dim=1)
         distances = F.conv2d(input=x, weight=now_prototype_vectors)
@@ -137,7 +138,8 @@ class TESNet(nn.Module):
         return distances
     
     def _project2basis(self,x):
-
+        # Generates an array of distances between the input activation and the prototype vectors
+        # Same as _cosine_convolution but input is not normalized 
         now_prototype_vectors = F.normalize(self.prototype_vectors, p=2, dim=1)
         distances = F.conv2d(input=x, weight=now_prototype_vectors)
         return distances

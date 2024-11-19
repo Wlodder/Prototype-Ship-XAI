@@ -10,6 +10,14 @@ import argparse
 import re
 from util.helpers import makedir
 import push, model_cap, train_and_test_cap as tnt
+import os
+import sys
+# Adding the utils to the path to be found
+
+sys.path.append(os.environ['PACKAGE_PATH'])
+
+from joint.data.datasets import create_datasets
+from joint.settings.TesNet_settings_MMarvel import get_args, get_optimizer_coeffs
 from util import save
 from util.log import create_logger
 from util.preprocess import mean, std, preprocess_input_function
@@ -18,81 +26,115 @@ import settings_CUB
 import settings_MMarvel 
 import vis_caps
 
-parser = argparse.ArgumentParser()
-parser.add_argument('-gpuid',type=str, default='0')
-parser.add_argument('-dataset',type=str,default="CUB")
-args = parser.parse_args()
+# parser = argparse.ArgumentParser()
+# parser.add_argument('-gpuid',type=str, default='0')
+# parser.add_argument('-dataset',type=str,default="CUB")
+args = get_args().parse_args()
 os.environ['CUDA_VISIBLE_DEVICES'] = args.gpuid
 print(os.environ['CUDA_VISIBLE_DEVICES'])
 
-#setting parameter
-dataset_name = args.dataset
-# load the hyper param
-if dataset_name == "CUB":
-    #model param
-    num_classes = settings_CUB.num_classes
-    img_size = settings_CUB.img_size
-    add_on_layers_type = settings_CUB.add_on_layers_type
-    prototype_shape = settings_CUB.prototype_shape
-    prototype_activation_function = settings_CUB.prototype_activation_function
-    base_architecture = settings_CUB.base_architecture
-    #datasets
-    train_dir = settings_CUB.train_dir
-    test_dir = settings_CUB.test_dir
-    train_push_dir = settings_CUB.train_push_dir
-    train_batch_size = settings_CUB.train_batch_size
-    test_batch_size = settings_CUB.test_batch_size
-    train_push_batch_size = settings_CUB.train_push_batch_size
-    #optimzer
-    joint_optimizer_lrs = settings_CUB.joint_optimizer_lrs
-    joint_lr_step_size = settings_CUB.joint_lr_step_size
-    warm_optimizer_lrs = settings_CUB.warm_optimizer_lrs
-    last_layer_optimizer_lr = settings_CUB.last_layer_optimizer_lr
-    # weighting of different training losses
-    coefs = settings_CUB.coefs
-    # number of training epochs, number of warm epochs, push start epoch, push epochs
-    num_train_epochs = settings_CUB.num_train_epochs
-    num_warm_epochs = settings_CUB.num_warm_epochs
-    push_start = settings_CUB.push_start
-    push_epochs = settings_CUB.push_epochs
-    # input for caps
-    analysis_start = settings_CUB.analysis_start
-    cap_width = settings_CUB.cap_width
-    k = settings_CUB.k
-elif dataset_name == 'MMarvel': 
-    num_classes = settings_MMarvel.num_classes
-    img_size = settings_MMarvel.img_size
-    add_on_layers_type = settings_MMarvel.add_on_layers_type
-    prototype_shape = settings_MMarvel.prototype_shape
-    prototype_activation_function = settings_MMarvel.prototype_activation_function
-    base_architecture = settings_MMarvel.base_architecture
-    #datasets
-    train_dir = settings_MMarvel.train_dir
-    test_dir = settings_MMarvel.test_dir
-    train_push_dir = settings_MMarvel.train_push_dir
-    train_batch_size = settings_MMarvel.train_batch_size
-    test_batch_size = settings_MMarvel.test_batch_size
-    train_push_batch_size = settings_MMarvel.train_push_batch_size
-    #optimzer
-    joint_optimizer_lrs = settings_MMarvel.joint_optimizer_lrs
-    joint_lr_step_size = settings_MMarvel.joint_lr_step_size
-    warm_optimizer_lrs = settings_MMarvel.warm_optimizer_lrs
-    last_layer_optimizer_lr = settings_MMarvel.last_layer_optimizer_lr
-    # weighting of different training losses
-    coefs = settings_MMarvel.coefs
-    # number of training epochs, number of warm epochs, push start epoch, push epochs
-    num_train_epochs = settings_MMarvel.num_train_epochs
-    num_warm_epochs = settings_MMarvel.num_warm_epochs
-    push_start = settings_MMarvel.push_start
-    push_epochs = settings_MMarvel.push_epochs
-    # input for caps
-    analysis_start = settings_MMarvel.analysis_start
-    cap_width = settings_MMarvel.cap_width
-    k = settings_MMarvel.k
-else:
-    raise Exception("there are no settings file of datasets {}".format(dataset_name))
+# Base parameters
+num_classes = args.num_classes
+img_size = args.img_size
+add_on_layers_type = args.add_on_layers_type
+prototype_activation_function = args.prototype_activation_function
+base_architecture = args.base_architecture
+
+#datasets
+train_batch_size = args.train_batch_size
+test_batch_size = args.test_batch_size
+train_push_batch_size = args.train_push_batch_size
+
+#optimzer
+optimizer_options = get_optimizer_coeffs()
+joint_optimizer_lrs = optimizer_options['joint_optimizer_lrs']
+joint_lr_step_size = args.joint_lr_step_size
+warm_optimizer_lrs = optimizer_options['warm_optimizer_lrs']
+last_layer_optimizer_lr = optimizer_options['last_layer_optimizer_lr']
+# weighting of different training losses
+
+coefs = optimizer_options['coefs']
+
+# number of training epochs, number of warm epochs, push start epoch, push epochs
+num_train_epochs = args.num_train_epochs
+num_warm_epochs = args.num_warm_epochs
+push_start = args.push_start
+push_epochs = range(int(push_start), int(num_train_epochs))
+# input for caps
+analysis_start = args.analysis_start
+cap_width = args.cap_width
+k = args.k
+model_dir = args.model_dir
+prototype_shape=(args.num_prototypes,args.proto_depth,1,1)
+
+# #setting parameter
+# dataset_name = args.dataset
+# # load the hyper param
+# if dataset_name == "CUB":
+#     #model param
+#     num_classes = settings_CUB.num_classes
+#     img_size = settings_CUB.img_size
+#     add_on_layers_type = settings_CUB.add_on_layers_type
+#     prototype_shape = settings_CUB.prototype_shape
+#     prototype_activation_function = settings_CUB.prototype_activation_function
+#     base_architecture = settings_CUB.base_architecture
+#     #datasets
+#     train_dir = settings_CUB.train_dir
+#     test_dir = settings_CUB.test_dir
+#     train_push_dir = settings_CUB.train_push_dir
+#     train_batch_size = settings_CUB.train_batch_size
+#     test_batch_size = settings_CUB.test_batch_size
+#     train_push_batch_size = settings_CUB.train_push_batch_size
+#     #optimzer
+#     joint_optimizer_lrs = settings_CUB.joint_optimizer_lrs
+#     joint_lr_step_size = settings_CUB.joint_lr_step_size
+#     warm_optimizer_lrs = settings_CUB.warm_optimizer_lrs
+#     last_layer_optimizer_lr = settings_CUB.last_layer_optimizer_lr
+#     # weighting of different training losses
+#     coefs = settings_CUB.coefs
+#     # number of training epochs, number of warm epochs, push start epoch, push epochs
+#     num_train_epochs = settings_CUB.num_train_epochs
+#     num_warm_epochs = settings_CUB.num_warm_epochs
+#     push_start = settings_CUB.push_start
+#     push_epochs = settings_CUB.push_epochs
+#     # input for caps
+#     analysis_start = settings_CUB.analysis_start
+#     cap_width = settings_CUB.cap_width
+#     k = settings_CUB.k
+# elif dataset_name == 'MMarvel': 
+#     num_classes = settings_MMarvel.num_classes
+#     img_size = settings_MMarvel.img_size
+#     add_on_layers_type = settings_MMarvel.add_on_layers_type
+#     prototype_shape = settings_MMarvel.prototype_shape
+#     prototype_activation_function = settings_MMarvel.prototype_activation_function
+#     base_architecture = settings_MMarvel.base_architecture
+#     #datasets
+#     train_dir = settings_MMarvel.train_dir
+#     test_dir = settings_MMarvel.test_dir
+#     train_push_dir = settings_MMarvel.train_push_dir
+#     train_batch_size = settings_MMarvel.train_batch_size
+#     test_batch_size = settings_MMarvel.test_batch_size
+#     train_push_batch_size = settings_MMarvel.train_push_batch_size
+#     #optimzer
+#     joint_optimizer_lrs = settings_MMarvel.joint_optimizer_lrs
+#     joint_lr_step_size = settings_MMarvel.joint_lr_step_size
+#     warm_optimizer_lrs = settings_MMarvel.warm_optimizer_lrs
+#     last_layer_optimizer_lr = settings_MMarvel.last_layer_optimizer_lr
+#     # weighting of different training losses
+#     coefs = settings_MMarvel.coefs
+#     # number of training epochs, number of warm epochs, push start epoch, push epochs
+#     num_train_epochs = settings_MMarvel.num_train_epochs
+#     num_warm_epochs = settings_MMarvel.num_warm_epochs
+#     push_start = settings_MMarvel.push_start
+#     push_epochs = settings_MMarvel.push_epochs
+#     # input for caps
+#     analysis_start = settings_MMarvel.analysis_start
+#     cap_width = settings_MMarvel.cap_width
+#     k = settings_MMarvel.k
+# else:
+#     raise Exception("there are no settings file of datasets {}".format(dataset_name))
 base_architecture_type = re.match('^[a-z]*', base_architecture).group(0)
-model_dir = './saved_models/' + base_architecture + '/'
+model_dir = model_dir + base_architecture + '/'
 
 makedir(model_dir)
 
@@ -105,9 +147,7 @@ prototype_img_filename_prefix = 'prototype-img'
 prototype_self_act_filename_prefix = 'prototype-self-act'
 proto_bound_boxes_filename_prefix = 'bb'
 
-print(train_dir)
 
-normalize = transforms.Normalize(mean=mean,std=std)
 print('Use topk clster with k:',k)
 print('Increase weight for ss, ortho by 10 and sep loss to be',coefs['sep'])
 print('The chosen cap_width is:',cap_width)
@@ -116,63 +156,17 @@ print('The cap coef is:', coefs['cap_coef'])
 # all datasets
 # train set
 
-train_transformation = transforms.Compose([
-    transforms.ToTensor(),
-    transforms.Resize(size=(img_size, img_size)),
-    transforms.RandomHorizontalFlip(),
-    transforms.RandomRotation(15),
-    transforms.ColorJitter(brightness=0.1, contrast=0.1, saturation=0.1, hue=0),
-    normalize,
-])
+# Create datasets
+train_dataset, test_dataset, train_push_dataset = create_datasets()
 
-# train_transformation = transforms.Compose([
-#     transforms.Resize(size=(img_size, img_size)),
-#         transforms.RandomHorizontalFlip(),
-#         transforms.RandomRotation(15),
-#         transforms.ColorJitter(brightness=0.1, contrast=0.1, saturation=0.1, hue=0),
-#     normalize
-# ])
-def check_Image(path):
-  try:
-    im = Image.open(path)
-    return True
-  except:
-    return False
-
-test_transformation = transforms.Compose([
-    transforms.ToTensor(),
-    transforms.Resize(size=(img_size, img_size)),
-    transforms.RandomHorizontalFlip(),
-    normalize,
-])
-
-## Need to change for making adaptable to Military Marvel
-# train_dataset = datasets.ImageFolder(
-#     train_dir,
-#     transforms.Compose([
-#         transforms.Resize(size=(img_size, img_size)),
-#         transforms.ToTensor(),
-#         normalize,
-#     ]))
-# train_dataset = MARVEL_MILITARY(base_path=train_dir, train=True, transform=train_transformation)
-train_dataset = datasets.ImageFolder(train_dir, train_transformation)
 train_loader = torch.utils.data.DataLoader(
     train_dataset, batch_size=train_batch_size, shuffle=True,
     num_workers=2, pin_memory=False)
-
-# push set
-train_push_dataset = datasets.ImageFolder(
-    train_push_dir,
-    transforms.Compose([
-        transforms.Resize(size=(img_size, img_size)),
-        transforms.ToTensor(),
-    ]))
 
 train_push_loader = torch.utils.data.DataLoader(
     train_push_dataset, batch_size=train_push_batch_size, shuffle=False,
     num_workers=2, pin_memory=False)
 # test set
-test_dataset = datasets.ImageFolder(test_dir, test_transformation)
 test_loader = torch.utils.data.DataLoader(
     test_dataset, batch_size=test_batch_size, shuffle=False,
     num_workers=2, pin_memory=False)

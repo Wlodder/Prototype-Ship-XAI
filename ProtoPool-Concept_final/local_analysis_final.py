@@ -10,6 +10,12 @@ from torchvision import transforms, datasets
 from torch.autograd import Variable
 import pickle
 from model_cap_final import Protopool_cap
+import os
+import sys
+# Adding the utils to the path to be found
+
+sys.path.append(os.environ['PACKAGE_PATH'])
+from joint.data.datasets import class_mappings
 from utils import mixup_data, find_high_activation_crop
 import os
 import matplotlib.pyplot as plt
@@ -75,8 +81,11 @@ def local_analysis(imgs, model_multi, proto_info_dir, vis_count,
     img_pil = Image.open(img_rt)
     img_tensor = transforms_train_test(img_pil)
     img_variable = Variable(img_tensor.unsqueeze(0))
-    images_test = img_variable.cuda()
-    test_image_label = int(img_file_name[0:3])-1 # lable is on 0 idx based 
+    # img_file_name = imgs.split('/')[-1]
+    test_image_label = class_mappings[int(imgs.split('/')[1])]
+    images_test = img_variable
+
+
     labels_test = torch.tensor([test_image_label])
     prob, min_dist, proto_presence, cap_factor, avg_act, proto_act_capped = model_multi(images_test,
                                             gumbel_scale = 10e3,
@@ -428,31 +437,26 @@ def analyze(opt: Optional[List[str]]) -> None:
     # just an example, I leave this in for easier modification to run analysis on all the images 
 
     img_list = [ 
-        "1/1108353.jpg",
-        "1/1181194.jpg",
-        "1/1205939.jpg",
-        "1/1236335.jpg",
-        "1/1378820.jpg",
-        "1/1412443.jpg",
-        "1/151047.jpg",
-        "1/1518694.jpg",
-        "1/1537541.jpg",
-        "1/1555070.jpg",
-        "1/1571774.jpg",
-        "1/1601534.jpg",
-        "1/1657914.jpg",
-        "1/178777.jpg",
-        "1/1792510.jpg",
-        "1/1797868.jpg",
-        "1/1823162.jpg",
-        "1/1904040.jpg",
-        "1/198059.jpg",
-        "1/2027464.jpg",
-        "1/2063424.jpg",
-        "1/211015.jpg",
-        "1/2182948.jpg",
-        "1/2237203.jpg",
-        "1/2320948.jpg",
+		"./169/HMS_Ark_Royal_R07__-_IMO_8949575/246631.jpg",
+		"./164/RFS_Soobrazitelny_531__-_IMO_4614615/1362292.jpg",
+		"./163/ESPS_Descubierta_P75_/655203.jpg",
+		"./166/ITS_FRANCESCO_MIMBELLI_D561__-_IMO_4568919/2237975.jpg",
+		"./164/RFS_R-60_955__-_IMO_4615102/838170.jpg",
+		"./166/HMS_DRAGON_D35__-_IMO_4907866/3774980.jpg",
+		"./164/USS_Savannah_LCS28__-_IMO_4758708/3315945.jpg",
+		"./163/ENS_Badr_678_/2252037.jpg",
+		"./166/USS_Stout_DDG55__-_IMO_4676833/2876587.jpg",
+		"./164/FGS_OLDENBURG_F263__-_IMO_4548660/1137374.jpg",
+		"./166/USS_William_P._Lawrence_DDG110__-_IMO_4677382/2208409.jpg",
+		"./166/FS_LANGUEDOC_D653__-_IMO_4545046/2842681.jpg",
+		"./163/ARM_Algorab_PI1409_/2904506.jpg",
+		"./170/ORP_Sokol_294_/1852890.jpg",
+		"./166/ITS_Luigi_Durand_de_la_Penne_D560__-_IMO_4568907/2104079.jpg",
+		"./161/FGS_Passau_M1096__-_IMO_4907256/1123578.jpg",
+		"./161/RFS_BT-115_515_/2893327.jpg",
+		"./166/HMS_Dauntless_D33__-_IMO_4907751/1752167.jpg",
+		"./166/FS_LANGUEDOC_D653__-_IMO_4545046/2561858.jpg",
+		"./164/RFS_STEREGUSHCHIY_530__-_IMO_4614603/1830444.jpg"
     ]
 
     save_analysis_dir = args.save_analysis_dir
