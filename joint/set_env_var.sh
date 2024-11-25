@@ -10,11 +10,21 @@ export TEST_MMARVEL_PATH=$MMARVEL_BASE_PATH/test/data
 export PUSH_MMARVEL_PATH=$TRAIN_MMARVEL_PATH
 export VIS_MMARVEL_PATH=$TRAIN_MMARVEL_PATH/vis/data
 
+# Dataset diretories
+export FINE_MARVEL_BASE_PATH="/media/wlodder/T9/Datasets/Experiments/XAI/FineGrainedVesselRecognition"
+export FINE_MARVEL_DATA_PATH=$FINE_MARVEL_BASE_PATH
+export TRAIN_FINE_MARVEL_PATH=$FINE_MARVEL_BASE_PATH/train/data/class_dataset
+export TEST_FINE_MARVEL_PATH=$FINE_MARVEL_BASE_PATH/test/data/class_dataset
+export PUSH_FINE_MARVEL_PATH=$TRAIN_FINE_MARVEL_PATH
+export VIS_FINE_MARVEL_PATH=$TRAIN_FINE_MARVEL_PATH/vis/data
+
+
 # Running directories
 export BASE_RUNDIR='/home/wlodder/Interpretability/Prototypes/This-looks-like-those_ProtoConcepts/'
 export TESNET_RUNDIR=$BASE_RUNDIR/TesNet-Concept_final/
 export PROTO_POOL_RUNDIR=$BASE_RUNDIR/ProtoPool-Concept_final/
 export PROTO_PNET_RUNDIR=$BASE_RUNDIR/ProtoPNet-Concept_final/
+export PIPNET_RUNDIR=$BASE_RUNDIR/PIPNet/
 
 # Results directories
 export TESNET_RESULTS_DIR=/media/wlodder/T9/Datasets/Experiments/XAI/proto_results
@@ -25,3 +35,6 @@ export PROTO_POOL_PROTO_DIR=/media/wlodder/T9/Datasets/Experiments/XAI/proto_res
 
 export PROTO_PNET_RESULTS_DIR=/media/wlodder/T9/Datasets/Experiments/XAI/proto_results
 export PROTO_PNET_PROTO_DIR=/media/wlodder/T9/Datasets/Experiments/XAI/proto_results
+
+export PIPNET_RESULTS_DIR=/media/wlodder/T9/Datasets/Experiments/XAI/proto_results
+export PIPNET_PROTO_DIR=/media/wlodder/T9/Datasets/Experiments/XAI/proto_results
