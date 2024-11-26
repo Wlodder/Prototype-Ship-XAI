@@ -1,0 +1,8 @@
+Traceback (most recent call last):
+  File "/home/wlodder/Interpretability/Prototypes/This-looks-like-those_ProtoConcepts//PIPNet//main.py", line 369, in <module>
+    run_pipnet(args)
+  File "/home/wlodder/Interpretability/Prototypes/This-looks-like-those_ProtoConcepts//PIPNet//main.py", line 72, in run_pipnet
+    feature_net, add_on_layers, pool_layer, classification_layer, num_prototypes = get_network(len(classes), args)
+  File "/home/wlodder/Interpretability/Prototypes/This-looks-like-those_ProtoConcepts/PIPNet/pipnet/pipnet.py", line 75, in get_network
+    features = base_architecture_to_features[args.net](pretrained=not args.disable_pretrained)
+KeyError: 'conv_next_tiny'

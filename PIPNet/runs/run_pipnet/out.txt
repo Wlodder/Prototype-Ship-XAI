@@ -1,0 +1,4 @@
+Log dir:  ./runs/run_pipnet
+CUDA device set without id specification
+Device used:  cuda with id [0]
+Num classes (k) =  137 ['AMERIGO_VESPUCCI', 'ARGUS', 'Absalon_class', 'Adelaide_class', 'Albion_class'] etc.
