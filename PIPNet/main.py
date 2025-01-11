@@ -243,17 +243,21 @@ def run_pipnet(args=None):
         lrs_net+=train_info['lrs_net']
         lrs_classifier+=train_info['lrs_class']
         # Evaluate model
-        eval_info = eval_pipnet(net, testloader, epoch, device, log)
-        log.log_values('log_epoch_overview', epoch, eval_info['top1_accuracy'], eval_info['top5_accuracy'], eval_info['almost_sim_nonzeros'], eval_info['local_size_all_classes'], eval_info['almost_nonzeros'], eval_info['num non-zero prototypes'], train_info['train_accuracy'], train_info['loss'])
+
+        if epoch % args.eval_epoch_interval == 0 and epoch != args.epochs - 1:
+            eval_info = eval_pipnet(net, testloader, epoch, device, log)
+            log.log_values('log_epoch_overview', epoch, eval_info['top1_accuracy'], eval_info['top5_accuracy'], eval_info['almost_sim_nonzeros'], eval_info['local_size_all_classes'], eval_info['almost_nonzeros'], eval_info['num non-zero prototypes'], train_info['train_accuracy'], train_info['loss'])
             
         with torch.no_grad():
             net.eval()
             torch.save({'model_state_dict': net.state_dict(), 'optimizer_net_state_dict': optimizer_net.state_dict(), 'optimizer_classifier_state_dict': optimizer_classifier.state_dict()}, os.path.join(os.path.join(args.log_dir, 'checkpoints'), 'net_trained'))
 
-            if epoch%30 == 0:
+            if epoch%args.save_epoch_interval == 0:
                 net.eval()
                 torch.save({'model_state_dict': net.state_dict(), 'optimizer_net_state_dict': optimizer_net.state_dict(), 'optimizer_classifier_state_dict': optimizer_classifier.state_dict()}, os.path.join(os.path.join(args.log_dir, 'checkpoints'), 'net_trained_%s'%str(epoch)))            
         
+            if args.visualize_epoch_interval != None and epoch % args.visualize_epoch_interval == 0:
+                _ = visualize_topk(net, projectloader, len(classes), device, f'{epoch}_visualised_prototypes_topk', args)
             # save learning rate in figure
             plt.clf()
             plt.plot(lrs_net)
@@ -264,6 +268,8 @@ def run_pipnet(args=None):
                 
     net.eval()
     torch.save({'model_state_dict': net.state_dict(), 'optimizer_net_state_dict': optimizer_net.state_dict(), 'optimizer_classifier_state_dict': optimizer_classifier.state_dict()}, os.path.join(os.path.join(args.log_dir, 'checkpoints'), 'net_trained_last'))
+    eval_info = eval_pipnet(net, testloader, epoch, device, log)
+    log.log_values('log_epoch_overview', epoch, eval_info['top1_accuracy'], eval_info['top5_accuracy'], eval_info['almost_sim_nonzeros'], eval_info['local_size_all_classes'], eval_info['almost_nonzeros'], eval_info['num non-zero prototypes'], train_info['train_accuracy'], train_info['loss'])
 
     topks = visualize_topk(net, projectloader, len(classes), device, 'visualised_prototypes_topk', args)
     # set weights of prototypes that are never really found in projection set to 0
@@ -295,28 +301,28 @@ def run_pipnet(args=None):
             print("Class", c, "(", list(testloader.dataset.class_to_idx.keys())[list(testloader.dataset.class_to_idx.values()).index(c)],"):","has", len(relevant_ps),"relevant prototypes: ", relevant_ps)
 
     # Evaluate prototype purity        
-    if args.dataset == 'CUB-200-2011':
-        projectset_img0_path = projectloader.dataset.samples[0][0]
-        project_path = os.path.split(os.path.split(projectset_img0_path)[0])[0].split("dataset")[0]
-        parts_loc_path = os.path.join(project_path, "parts/part_locs.txt")
-        parts_name_path = os.path.join(project_path, "parts/parts.txt")
-        imgs_id_path = os.path.join(project_path, "images.txt")
-        cubthreshold = 0.5 
+    # if args.dataset == 'CUB-200-2011':
+    #     projectset_img0_path = projectloader.dataset.samples[0][0]
+    #     project_path = os.path.split(os.path.split(projectset_img0_path)[0])[0].split("dataset")[0]
+    #     parts_loc_path = os.path.join(project_path, "parts/part_locs.txt")
+    #     parts_name_path = os.path.join(project_path, "parts/parts.txt")
+    #     imgs_id_path = os.path.join(project_path, "images.txt")
+    #     cubthreshold = 0.5 
 
-        net.eval()
-        print("\n\nEvaluating cub prototypes for training set")        
-        csvfile_topk = get_topk_cub(net, projectloader, 10, 'train_'+str(epoch), device, args)
-        eval_prototypes_cub_parts_csv(csvfile_topk, parts_loc_path, parts_name_path, imgs_id_path, 'train_topk_'+str(epoch), args, log)
+    #     net.eval()
+    #     print("\n\nEvaluating cub prototypes for training set")        
+    #     csvfile_topk = get_topk_cub(net, projectloader, 10, 'train_'+str(epoch), device, args)
+    #     eval_prototypes_cub_parts_csv(csvfile_topk, parts_loc_path, parts_name_path, imgs_id_path, 'train_topk_'+str(epoch), args, log)
         
-        csvfile_all = get_proto_patches_cub(net, projectloader, 'train_all_'+str(epoch), device, args, threshold=cubthreshold)
-        eval_prototypes_cub_parts_csv(csvfile_all, parts_loc_path, parts_name_path, imgs_id_path, 'train_all_thres'+str(cubthreshold)+'_'+str(epoch), args, log)
+    #     csvfile_all = get_proto_patches_cub(net, projectloader, 'train_all_'+str(epoch), device, args, threshold=cubthreshold)
+    #     eval_prototypes_cub_parts_csv(csvfile_all, parts_loc_path, parts_name_path, imgs_id_path, 'train_all_thres'+str(cubthreshold)+'_'+str(epoch), args, log)
         
-        print("\n\nEvaluating cub prototypes for test set")
-        csvfile_topk = get_topk_cub(net, test_projectloader, 10, 'test_'+str(epoch), device, args)
-        eval_prototypes_cub_parts_csv(csvfile_topk, parts_loc_path, parts_name_path, imgs_id_path, 'test_topk_'+str(epoch), args, log)
-        cubthreshold = 0.5
-        csvfile_all = get_proto_patches_cub(net, test_projectloader, 'test_'+str(epoch), device, args, threshold=cubthreshold)
-        eval_prototypes_cub_parts_csv(csvfile_all, parts_loc_path, parts_name_path, imgs_id_path, 'test_all_thres'+str(cubthreshold)+'_'+str(epoch), args, log)
+    #     print("\n\nEvaluating cub prototypes for test set")
+    #     csvfile_topk = get_topk_cub(net, test_projectloader, 10, 'test_'+str(epoch), device, args)
+    #     eval_prototypes_cub_parts_csv(csvfile_topk, parts_loc_path, parts_name_path, imgs_id_path, 'test_topk_'+str(epoch), args, log)
+    #     cubthreshold = 0.5
+    #     csvfile_all = get_proto_patches_cub(net, test_projectloader, 'test_'+str(epoch), device, args, threshold=cubthreshold)
+    #     eval_prototypes_cub_parts_csv(csvfile_all, parts_loc_path, parts_name_path, imgs_id_path, 'test_all_thres'+str(cubthreshold)+'_'+str(epoch), args, log)
         
     # visualize predictions 
     visualize(net, projectloader, len(classes), device, 'visualised_prototypes', args)
@@ -329,25 +335,25 @@ def run_pipnet(args=None):
 
 
     # EVALUATE OOD DETECTION
-    ood_datasets = ["CARS", "CUB-200-2011", "pets"]
-    for percent in [95.]:
-        print("\nOOD Evaluation for epoch", epoch,"with percent of", percent)
-        _, _, _, class_thresholds = get_thresholds(net, testloader, epoch, device, percent, log)
-        print("Thresholds:", class_thresholds)
-        # Evaluate with in-distribution data
-        id_fraction = eval_ood(net, testloader, epoch, device, class_thresholds)
-        print("ID class threshold ID fraction (TPR) with percent",percent,":", id_fraction)
+    # ood_datasets = ["CARS", "CUB-200-2011", "pets"]
+    # for percent in [95.]:
+    #     print("\nOOD Evaluation for epoch", epoch,"with percent of", percent)
+    #     _, _, _, class_thresholds = get_thresholds(net, testloader, epoch, device, percent, log)
+    #     print("Thresholds:", class_thresholds)
+    #     # Evaluate with in-distribution data
+    #     id_fraction = eval_ood(net, testloader, epoch, device, class_thresholds)
+    #     print("ID class threshold ID fraction (TPR) with percent",percent,":", id_fraction)
         
-        # Evaluate with out-of-distribution data
-        for ood_dataset in ood_datasets:
-            if ood_dataset != args.dataset:
-                print("\n OOD dataset: ", ood_dataset)
-                ood_args = deepcopy(args)
-                ood_args.dataset = ood_dataset
-                _, _, _, _, _,ood_testloader, _, _ = get_dataloaders(ood_args, device)
+    #     # Evaluate with out-of-distribution data
+    #     for ood_dataset in ood_datasets:
+    #         if ood_dataset != args.dataset:
+    #             print("\n OOD dataset: ", ood_dataset)
+    #             ood_args = deepcopy(args)
+    #             ood_args.dataset = ood_dataset
+    #             _, _, _, _, _,ood_testloader, _, _ = get_dataloaders(ood_args, device)
                 
-                id_fraction = eval_ood(net, ood_testloader, epoch, device, class_thresholds)
-                print(args.dataset, "- OOD", ood_dataset, "class threshold ID fraction (FPR) with percent",percent,":", id_fraction)                
+    #             id_fraction = eval_ood(net, ood_testloader, epoch, device, class_thresholds)
+    #             print(args.dataset, "- OOD", ood_dataset, "class threshold ID fraction (FPR) with percent",percent,":", id_fraction)                
 
     print("Done!")
 

@@ -113,10 +113,26 @@ def get_args() -> argparse.Namespace:
                         action='store_true',
                         help='Flag that indicates whether to include a trainable bias in the linear classification layer.'
                         )
+    parser.add_argument('--vis_top_k',
+                        action='store_true',
+                        help='Flag that indicates whether to include a trainable bias in the linear classification layer.'
+                        )
     parser.add_argument('--extra_test_image_folder',
                         type=str,
                         default='./experiments',
                         help='Folder with images that PIP-Net will predict and explain, that are not in the training or test set. E.g. images with 2 objects or OOD image. Images should be in subfolder. E.g. images in ./experiments/images/, and argument --./experiments')
+    parser.add_argument('--save_epoch_interval',
+                        type=int,
+                        default=30,
+                        help='How often the model should be saved after the pretraining phase')
+    parser.add_argument('--eval_epoch_interval',
+                        type=int,
+                        default=1,
+                        help='How often the evaluation on eval set should be run')
+    parser.add_argument('--visualize_epoch_interval',
+                        type=int,
+                        default=None,
+                        help='How often the evaluation on eval set should be run')
 
     args = parser.parse_args()
     if len(args.log_dir.split('/'))>2:
