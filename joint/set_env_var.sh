@@ -10,7 +10,7 @@ export TEST_MMARVEL_PATH=$MMARVEL_BASE_PATH/test/data
 export PUSH_MMARVEL_PATH=$TRAIN_MMARVEL_PATH
 export VIS_MMARVEL_PATH=$TRAIN_MMARVEL_PATH/vis/data
 
-# Dataset diretories
+# Dataset diretories Finegrained
 export FINE_MARVEL_BASE_PATH="/media/wlodder/T9/Datasets/Experiments/XAI/FineGrainedVesselRecognition"
 export FINE_MARVEL_DATA_PATH=$FINE_MARVEL_BASE_PATH
 export TRAIN_FINE_MARVEL_PATH=$FINE_MARVEL_BASE_PATH/train/data/class_dataset
@@ -20,6 +20,13 @@ export TEST_SCHEMA_ONLY_FINE_MARVEL_PATH=$FINE_MARVEL_BASE_PATH/schematics
 export PUSH_FINE_MARVEL_PATH=$TRAIN_FINE_MARVEL_PATH
 export VIS_FINE_MARVEL_PATH=$TRAIN_FINE_MARVEL_PATH/vis/data
 
+# Dataset directories Janes
+export JANES_MARVEL_BASE_PATH="/media/wlodder/T9/Datasets/Experiments/XAI/FineGrainedVesselRecognition/janes"
+export TRAIN_JANES_MARVEL_PATH=$JANES_MARVEL_BASE_PATH/train/data/jane_dataset
+export TEST_JANES_MARVEL_PATH=$JANES_MARVEL_BASE_PATH/test/data/jane_dataset
+export TEST_JANES_LABEL_MARVEL_PATH=$JANES_MARVEL_BASE_PATH/test/json
+export PUSH_JANES_MARVEL_PATH=$TRAIN_JANES_MARVEL_PATH
+export VIS_JANES_MARVEL_PATH=$TRAIN_JANES_MARVEL_PATH/vis/data
 
 # Running directories
 export BASE_RUNDIR='/home/wlodder/Interpretability/Prototypes/This-looks-like-those_ProtoConcepts/'
