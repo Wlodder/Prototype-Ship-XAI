@@ -31,6 +31,8 @@ def get_data(args: argparse.Namespace):
         return get_cars(True, os.environ['TRAIN_MMARVEL_PATH'], os.environ['TRAIN_MMARVEL_PATH'], os.environ['TEST_MMARVEL_PATH'], args.image_size, args.seed, args.validation_size)
     if args.dataset == 'Fine_Military_Marvel':
         return get_cars(True, os.environ['TRAIN_FINE_MARVEL_PATH'], os.environ['TRAIN_FINE_MARVEL_PATH'], os.environ['TEST_FINE_MARVEL_PATH'], args.image_size, args.seed, args.validation_size)
+    if args.dataset == 'Janes_Military_Marvel':
+        return get_cars(True, os.environ['TRAIN_JANES_MARVEL_PATH'], os.environ['TRAIN_JANES_MARVEL_PATH'], os.environ['TEST_JANES_MARVEL_PATH'], args.image_size, args.seed, args.validation_size)
     if args.dataset == 'grayscale_example':
         return get_grayscale(True, './data/train', './data/train', './data/test', args.image_size, args.seed, args.validation_size)
     raise Exception(f'Could not load data set, data set "{args.dataset}" not found!')
