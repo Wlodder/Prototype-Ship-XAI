@@ -134,6 +134,12 @@ def get_args() -> argparse.Namespace:
                         default=None,
                         help='How often the evaluation on eval set should be run')
 
+    parser.add_argument('--proto_dir',
+                        type=str,
+                        default=None,
+                        help='Where are prototypes going to be drawn and shared from ')
+
+
     args = parser.parse_args()
     if len(args.log_dir.split('/'))>2:
         if not os.path.exists(args.log_dir):

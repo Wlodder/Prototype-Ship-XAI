@@ -255,9 +255,16 @@ def visualize(net, projectloader, num_classes, device, foldername, args: argpars
                     save_path = os.path.join(dir, "prototype_%s")%str(p)
                     if not os.path.exists(save_path):
                         os.makedirs(save_path)
-                    draw = D.Draw(image)
-                    draw.rectangle([(w_coor_min,h_coor_min), (w_coor_max, h_coor_max)], outline='yellow', width=2)
-                    image.save(os.path.join(save_path, 'p%s_%s_%s_%s_rect.png'%(str(p),str(imglabel),str(round(found_max, 2)),str(img_to_open.split('/')[-1].split('.jpg')[0]))))
+                    # draw = D.Draw(image)
+                    # draw.rectangle([(w_coor_min,h_coor_min), (w_coor_max, h_coor_max)], outline='yellow', width=2)
+                    # image.save(os.path.join(save_path, 'p%s_%s_%s_%s_rect.png'%(str(p),str(imglabel),str(round(found_max, 2)),str(img_to_open.split('/')[-1].split('.jpg')[0]))))
+
+                    # Create a set of highly activated prototypes to select from 
+                    
+                    torchvision.utils.save_image(img_tensor_patch, os.path.join(save_path,f'p%s_%s_%s_%s_patch.png'%(str(p),
+                                                                                                                    str(imglabel),
+                                                                                                                    str(round(found_max,2)),
+                                                                                                                    str(img_to_open.split('/')[-1].split('.jpg')[0]))))
                     
         
         images_seen_before+=len(ys)
@@ -267,8 +274,12 @@ def visualize(net, projectloader, num_classes, device, foldername, args: argpars
     for p in range(net.module._num_prototypes):
         if saved[p]>0:
             try:
+
+
                 sorted_by_second = sorted(tensors_per_prototype[p], key=lambda tup: tup[1], reverse=True)
                 sorted_ps = [i[0] for i in sorted_by_second]
+
+
                 grid = torchvision.utils.make_grid(sorted_ps, nrow=16, padding=1)
                 torchvision.utils.save_image(grid,os.path.join(dir,"grid_%s.png"%(str(p))))
             except RuntimeError:

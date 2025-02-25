@@ -245,8 +245,10 @@ def run_pipnet(args=None):
         # Evaluate model
 
         if epoch % args.eval_epoch_interval == 0 and epoch != args.epochs - 1:
-            eval_info = eval_pipnet(net, testloader, epoch, device, log)
-            log.log_values('log_epoch_overview', epoch, eval_info['top1_accuracy'], eval_info['top5_accuracy'], eval_info['almost_sim_nonzeros'], eval_info['local_size_all_classes'], eval_info['almost_nonzeros'], eval_info['num non-zero prototypes'], train_info['train_accuracy'], train_info['loss'])
+            net.eval()
+            with torch.no_grad():
+                eval_info = eval_pipnet(net, testloader, epoch, device, log)
+                log.log_values('log_epoch_overview', epoch, eval_info['top1_accuracy'], eval_info['top5_accuracy'], eval_info['almost_sim_nonzeros'], eval_info['local_size_all_classes'], eval_info['almost_nonzeros'], eval_info['num non-zero prototypes'], train_info['train_accuracy'], train_info['loss'])
             
         with torch.no_grad():
             net.eval()

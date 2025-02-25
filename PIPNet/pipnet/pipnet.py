@@ -28,7 +28,7 @@ class PIPNet(nn.Module):
         self._classification = classification_layer
         self._multiplier = classification_layer.normalization_multiplier
 
-    def forward(self, xs,  inference=False):
+    def forward(self, xs,  inference=False, features_save=False):
         features = self._net(xs) 
         proto_features = self._add_on(features)
         pooled = self._pool(proto_features)
@@ -40,6 +40,8 @@ class PIPNet(nn.Module):
             return proto_features, clamped_pooled, out
         else:
             out = self._classification(pooled) #shape (bs*2, num_classes) 
+            if features_save:
+                return proto_features, pooled, out, features
             return proto_features, pooled, out
 
 
