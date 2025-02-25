@@ -1,5 +1,13 @@
 #!/bin/bash
 
+DIRECTORY=$1
+
+if [ -z "$DIRECTORY" ];
+then
+    echo "Directory is not set "
+else
+    echo "Directory is set to $DIRECTORY "
+fi
 export PACKAGE_PATH='/home/wlodder/Interpretability/Prototypes/This-looks-like-those_ProtoConcepts/'
 
 # Dataset diretories
@@ -21,7 +29,7 @@ export PUSH_FINE_MARVEL_PATH=$TRAIN_FINE_MARVEL_PATH
 export VIS_FINE_MARVEL_PATH=$TRAIN_FINE_MARVEL_PATH/vis/data
 
 # Dataset directories Janes
-export JANES_MARVEL_BASE_PATH="/media/wlodder/T9/Datasets/Experiments/XAI/FineGrainedVesselRecognition/random_10_1_janes"
+export JANES_MARVEL_BASE_PATH="/media/wlodder/T9/Datasets/Experiments/XAI/FineGrainedVesselRecognition/${DIRECTORY}"
 export TRAIN_JANES_MARVEL_PATH=$JANES_MARVEL_BASE_PATH/train/data/jane_dataset
 export TEST_JANES_MARVEL_PATH=$JANES_MARVEL_BASE_PATH/test/data/jane_dataset
 export TEST_JANES_LABEL_MARVEL_PATH=$JANES_MARVEL_BASE_PATH/test/json
@@ -29,6 +37,11 @@ export PUSH_JANES_MARVEL_PATH=$TRAIN_JANES_MARVEL_PATH
 export VIS_JANES_MARVEL_PATH=$TRAIN_JANES_MARVEL_PATH/vis/data
 export SUGGESTION_JANES_MARVEL_PATH=$JANES_MARVEL_BASE_PATH/suggestions/data/jane_dataset
 export SUGGESTION_JANES_LABEL_MARVEL_PATH=$JANES_MARVEL_BASE_PATH/suggestions/json
+
+
+if [ ! -d $JANES_MARVEL_BASE_PATH ]; then 
+    echo "Chosen directory does not exist"
+fi
 
 # Running directories
 export BASE_RUNDIR='/home/wlodder/Interpretability/Prototypes/This-looks-like-those_ProtoConcepts/'
