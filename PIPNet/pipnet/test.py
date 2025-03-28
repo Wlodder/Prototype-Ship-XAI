@@ -128,6 +128,78 @@ def eval_pipnet(net,
 
     return info
 
+@torch.no_grad()
+def get_image_clusters(net,
+        test_set: DataLoader,
+        epoch,
+        device,
+        log: Log = None,  
+        progress_prefix: str = 'Eval Epoch'
+        ) -> dict:
+    
+    net = net.to(device)
+    # Make sure the model is in evaluation mode
+    net.eval()
+    # Keep an info dict about the procedure
+    info = dict()
+    # Build a confusion matrix
+
+    test_loader = DataLoader(test_set,batch_size=8)
+    
+    # Show progress on progress bar
+    test_iter = tqdm(enumerate(test_loader),
+                        total=len(test_loader),
+                        desc=progress_prefix+' %s'%epoch,
+                        mininterval=5.,
+                        ncols=0)
+    
+
+    (xs, ys, paths) = next(iter(test_loader))
+    # Iterate through the test set
+    classification_weights = net.module._classification.weight
+
+    # Idea is to get pseudo labels and highest activated prototypes for the pseudo labels
+    # And cluster based on the entire dataset, 
+    # The reason to do this is that we want to create a set of classes based on jointly used prototypes 
+    # Here are cases
+    # Either the prototypes are shared and related, in which case we share the same structure, or 
+    # Shared and impure in which case we are able to attempt to purify by increasing the samples as negative samples
+    # By including them together in a joint higher sampling rate
+    for i, (xs, _, paths) in test_iter:
+        xs = xs.to(device)
+        
+        with torch.no_grad():
+            net.module._classification.weight.copy_(torch.clamp(net.module._classification.weight.data - 1e-3, min=0.)) 
+            # Use the model to classify this batch of input data
+            _, pooled, out = net(xs)
+
+            predictions = torch.argmax(out, dim=1)
+
+
+            for b  in range(pooled.size(0)):
+
+                path = paths[b]
+                pool = pooled[b]
+                prediction = predictions[b]
+
+                activated_prototypes = torch.argsort(pool, descending=True)
+                prototypes = []
+                for prototype in activated_prototypes:
+                    simweight = pooled[b, prototype].item() * classification_weights[prediction, prototype].item()
+                    if abs(simweight) > 0.01:
+                        prototypes.append(prototype.cpu().item())
+
+                    if len(prototypes) > 5:
+                        break
+
+                # print(path, prototypes)
+                info[path] = prototypes
+        
+        del out
+        del pooled
+        
+
+    return info
 
 @torch.no_grad()
 def eval_pipnet_full(net,

@@ -1,0 +1,48 @@
+Starting
+/media/wlodder/T9/Datasets/Experiments/XAI/proto_results/exploration/convnext_tiny_26_3_30_200_16_16_384_Janes/net_trained_10/exploration/log/visualised_prototypes/prototype_50/*.png
+Number of prototypes set from 768 to 200 . Extra 1x1 conv layer added. Not recommended.
+['_net.features.0.0', '_net.features.1.0.block.0', '_net.features.1.0.block.3', '_net.features.1.0.block.5', '_net.features.1.1.block.0', '_net.features.1.1.block.3', '_net.features.1.1.block.5', '_net.features.1.2.block.0', '_net.features.1.2.block.3', '_net.features.1.2.block.5', '_net.features.2.1', '_net.features.3.0.block.0', '_net.features.3.0.block.3', '_net.features.3.0.block.5', '_net.features.3.1.block.0', '_net.features.3.1.block.3', '_net.features.3.1.block.5', '_net.features.3.2.block.0', '_net.features.3.2.block.3', '_net.features.3.2.block.5', '_net.features.4.1', '_net.features.5.0.block.0', '_net.features.5.0.block.3', '_net.features.5.0.block.5', '_net.features.5.1.block.0', '_net.features.5.1.block.3', '_net.features.5.1.block.5', '_net.features.5.2.block.0', '_net.features.5.2.block.3', '_net.features.5.2.block.5', '_net.features.5.3.block.0', '_net.features.5.3.block.3', '_net.features.5.3.block.5', '_net.features.5.4.block.0', '_net.features.5.4.block.3', '_net.features.5.4.block.5', '_net.features.5.5.block.0', '_net.features.5.5.block.3', '_net.features.5.5.block.5', '_net.features.5.6.block.0', '_net.features.5.6.block.3', '_net.features.5.6.block.5', '_net.features.5.7.block.0', '_net.features.5.7.block.3', '_net.features.5.7.block.5', '_net.features.5.8.block.0', '_net.features.5.8.block.3', '_net.features.5.8.block.5', '_net.features.6.1', '_net.features.7.0.block.0', '_net.features.7.0.block.3', '_net.features.7.0.block.5', '_net.features.7.1.block.0', '_net.features.7.1.block.3', '_net.features.7.1.block.5', '_net.features.7.2.block.0', '_net.features.7.2.block.3', '_net.features.7.2.block.5', '_add_on.0']
+p50_3_0.6_2371479_rect.png
+torch.Size([672, 224])
+p50_5_0.55_248573_rect.png
+torch.Size([672, 224])
+p50_5_0.68_2656134_rect.png
+torch.Size([672, 224])
+p50_14_0.89_2252990_rect.png
+torch.Size([672, 224])
+p50_16_0.68_2284117_rect.png
+torch.Size([672, 224])
+p50_16_0.71_2358831_rect.png
+torch.Size([672, 224])
+p50_16_0.58_780003_rect.png
+torch.Size([672, 224])
+p50_18_1.0_1624106_rect.png
+torch.Size([672, 224])
+p50_18_0.77_2363829_rect.png
+torch.Size([672, 224])
+p50_21_0.76_1627027_rect.png
+torch.Size([672, 224])
+p50_21_0.56_738393_rect.png
+torch.Size([672, 224])
+p50_22_0.68_2307243_rect.png
+torch.Size([672, 224])
+p50_22_0.9_2611789_rect.png
+torch.Size([672, 224])
+p50_22_0.66_3379129_rect.png
+torch.Size([672, 224])
+[(14, 2), (16, 2), (18, 18), (6, 15), (20, 19), (10, 13), (18, 2), (18, 19), (14, 4), (18, 4), (13, 22), (16, 3), (4, 14), (4, 10)]
+_add_on.0
+torch.Size([135200])
+torch.Size([135200])
+torch.Size([135200])
+torch.Size([135200])
+torch.Size([135200])
+torch.Size([135200])
+torch.Size([135200])
+torch.Size([135200])
+torch.Size([135200])
+torch.Size([135200])
+torch.Size([135200])
+torch.Size([135200])
+torch.Size([135200])
+torch.Size([135200])

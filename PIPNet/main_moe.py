@@ -4,13 +4,11 @@ import torch.nn as nn
 from util.args import get_args, save_args, get_optimizer_nn
 from util.data import get_dataloaders
 from util.func import init_weights_xavier
-from util.vis_pipnet import get_img_coordinates
-# from pipnet.train import train_pipnet_cutmix
-from pipnet.train_memory import train_pipnet_memory as train_pipnet_cutmix
+from pipnet.train import train_pipnet
 from pipnet.test import eval_pipnet, get_thresholds, eval_ood
 from util.eval_cub_csv import eval_prototypes_cub_parts_csv, get_topk_cub, get_proto_patches_cub
 import torch
-from util.vis_pipnet import visualize, visualize_topk, prototype_buffer_update
+from util.vis_pipnet import visualize, visualize_topk
 from util.visualize_prediction import vis_pred, vis_pred_experiments
 import sys, os
 import random
@@ -143,7 +141,6 @@ def run_pipnet(args=None):
     
     
     lrs_pretrain_net = []
-    proto_dir_name = "visualized_database"
     # PRETRAINING PROTOTYPES PHASE
     for epoch in range(1, args.epochs_pretrain+1):
         for param in params_to_train:
@@ -160,9 +157,7 @@ def run_pipnet(args=None):
         print("\nPretrain Epoch", epoch, "with batch size", trainloader_pretraining.batch_size)
         
         # Pretrain prototypes
-        train_info = train_pipnet_cutmix(net, trainloader_pretraining, optimizer_net, optimizer_classifier,
-                                          scheduler_net, None, criterion, epoch, args.epochs_pretrain,
-                                            device, f'{args.proto_dir}/{proto_dir_name}', args, pretrain=True, finetune=False)
+        train_info = train_pipnet(net, trainloader_pretraining, optimizer_net, optimizer_classifier, scheduler_net, None, criterion, epoch, args.epochs_pretrain, device, pretrain=True, finetune=False)
         lrs_pretrain_net+=train_info['lrs_net']
         plt.clf()
         plt.plot(lrs_pretrain_net)
@@ -175,12 +170,7 @@ def run_pipnet(args=None):
         net.train()
     with torch.no_grad():
         if 'convnext' in args.net and args.epochs_pretrain > 0:
-            _, buffer = prototype_buffer_update(net, projectloader, len(classes), device, 'visualised_pretrained_prototypes_topk', args, k=args.k)
-            # print(tensors_per_prototype.keys())
-            # print(tensors_per_prototype[0][0].size())
-            # visualize(net, projectloader, len(classes), device, proto_dir_name, args)
-            
-            x = 0
+            topks = visualize_topk(net, projectloader, len(classes), device, 'visualised_pretrained_prototypes_topk', args)
         
     # SECOND TRAINING PHASE
     # re-initialize optimizers and schedulers for second training phase
@@ -249,10 +239,7 @@ def run_pipnet(args=None):
                     print("Classifier bias: ", net.module._classification.bias)
                 torch.set_printoptions(profile="default")
 
-        train_info = train_pipnet_cutmix(net, trainloader_normal, optimizer_net, optimizer_classifier,
-                                   scheduler_net, scheduler_classifier, criterion, epoch,
-                                     args.epochs, device, f'{args.proto_dir}/{proto_dir_name}', args, pretrain=False, finetune=finetune,
-                                     prototype_buffer=buffer)
+        train_info = train_pipnet(net, trainloader, optimizer_net, optimizer_classifier, scheduler_net, scheduler_classifier, criterion, epoch, args.epochs, device, pretrain=False, finetune=finetune)
         lrs_net+=train_info['lrs_net']
         lrs_classifier+=train_info['lrs_class']
         # Evaluate model
@@ -272,11 +259,7 @@ def run_pipnet(args=None):
                 torch.save({'model_state_dict': net.state_dict(), 'optimizer_net_state_dict': optimizer_net.state_dict(), 'optimizer_classifier_state_dict': optimizer_classifier.state_dict()}, os.path.join(os.path.join(args.log_dir, 'checkpoints'), 'net_trained_%s'%str(epoch)))            
         
             if args.visualize_epoch_interval != None and epoch % args.visualize_epoch_interval == 0:
-                _, buffer = prototype_buffer_update(net, projectloader, len(classes), device, f'{epoch}_visualised_prototypes_topk', args, k=args.k)
-                proto_dir_name = f'visualized_database_{epoch}'
-                print(buffer)
-                # visualize(net, projectloader, len(classes), device, proto_dir_name, args)
-
+                _ = visualize_topk(net, projectloader, len(classes), device, f'{epoch}_visualised_prototypes_topk', args)
             # save learning rate in figure
             plt.clf()
             plt.plot(lrs_net)

@@ -1,3 +1,5 @@
+import torchvision.transforms.functional
+import torchvision.transforms.functional_tensor
 from pipnet.pipnet import PIPNet, get_network
 from util.log import Log
 import torch.nn as nn
@@ -5,17 +7,45 @@ from util.args import get_args, save_args, get_optimizer_nn
 from util.data import get_dataloaders
 from util.func import init_weights_xavier
 from pipnet.train import train_pipnet
+from pipnet.test import get_image_clusters
 from pipnet.test import eval_pipnet, get_thresholds, eval_ood
-from util.eval_cub_csv import eval_prototypes_cub_parts_csv, get_topk_cub, get_proto_patches_cub
 import torch
 from util.vis_pipnet import visualize, visualize_topk
-from util.visualize_prediction import vis_pred, vis_pred_experiments, vis_pred_experimental
+from util.visualize_prediction import vis_pred, vis_pred_experiments
 import sys, os
 import random
 import numpy as np
 from shutil import copy
 import matplotlib.pyplot as plt
+from torch.utils.data import DataLoader 
+import torchvision
 from copy import deepcopy
+from sklearn.cluster import KMeans
+
+class ImageFolderWithPaths(torchvision.datasets.ImageFolder):
+
+    def __init__(self, path, args):
+        super(ImageFolderWithPaths, self).__init__(path)
+        img_size = args.image_size
+        shape = (3, img_size, img_size)
+        mean = (0.485, 0.456, 0.406)
+        std = (0.229, 0.224, 0.225)
+
+        normalize = torchvision.transforms.Normalize(mean=mean,std=std)
+        self.transform_no_augment = torchvision.transforms.Compose([
+                                torchvision.transforms.Resize(size=(img_size, img_size)),
+                                torchvision.transforms.ToTensor(),
+                                normalize
+                            ])
+
+    def __getitem__(self, index):
+  
+        img, label = super(ImageFolderWithPaths, self).__getitem__(index)
+
+        img = self.transform_no_augment(img)
+        path = self.imgs[index][0]
+        
+        return (img, label ,path)
 
 def run_pipnet(args=None):
 
@@ -117,46 +147,58 @@ def run_pipnet(args=None):
             net.module._multiplier.requires_grad = False
 
             print("Classification layer initialized with mean", torch.mean(net.module._classification.weight).item())
-    
-    # Define classification loss function and scheduler
 
-    # Forward one batch through the backbone to get the latent output size
+    train_with_path = ImageFolderWithPaths(os.environ['TEST_JANES_MARVEL_PATH'], args)
+
     with torch.no_grad():
-        xs1, _, _ = next(iter(trainloader))
-        xs1 = xs1.to(device)
-        proto_features, _, _ = net(xs1)
-        wshape = proto_features.shape[-1]
-        args.wshape = wshape #needed for calculating image patch size
-        print("Output shape: ", proto_features.shape)
-    
-    if net.module._num_classes == 2:
-        # Create a csv log for storing the test accuracy, F1-score, mean train accuracy and mean loss for each epoch
-        log.create_log('log_epoch_overview', 'epoch', 'test_top1_acc', 'test_f1', 'almost_sim_nonzeros', 'local_size_all_classes','almost_nonzeros_pooled', 'num_nonzero_prototypes', 'mean_train_acc', 'mean_train_loss_during_epoch')
-        print("Your dataset only has two classes. Is the number of samples per class similar? If the data is imbalanced, we recommend to use the --weighted_loss flag to account for the imbalance.")
-    else:
-        # Create a csv log for storing the test accuracy (top 1 and top 5), mean train accuracy and mean loss for each epoch
-        log.create_log('log_epoch_overview', 'epoch', 'test_top1_acc', 'test_top5_acc', 'almost_sim_nonzeros', 'local_size_all_classes','almost_nonzeros_pooled', 'num_nonzero_prototypes', 'mean_train_acc', 'mean_train_loss_during_epoch')
-    
-    
-    if args.vis_top_k:
-        with torch.no_grad():
-            topks = visualize_topk(net, test_projectloader, len(classes), device, 'visualised_pretrained_prototypes_topk', args)
-        
-    
-   
-    net.eval()
-    # torch.save({'model_state_dict': net.state_dict(), 'optimizer_net_state_dict': optimizer_net.state_dict(), 'optimizer_classifier_state_dict': optimizer_classifier.state_dict()}, os.path.join(os.path.join(args.log_dir, 'checkpoints'), 'net_trained_last'))
-    # eval_info = eval_pipnet(net, testloader, epoch, device, log)
-    # log.log_values('log_epoch_overview', epoch, eval_info['top1_accuracy'], eval_info['top5_accuracy'], eval_info['almost_sim_nonzeros'], eval_info['local_size_all_classes'], eval_info['almost_nonzeros'], eval_info['num non-zero prototypes'], train_info['train_accuracy'], train_info['loss'])
-    # visualize predictions 
+        net.module._classification.weight.copy_(torch.clamp(net.module._classification.weight.data - 1e-3, min=0.)) 
+        classification_weights = net.module._classification.weight
+        relevant_prototypes_per_class = {}
+        for cl in range(classification_weights.size(0)):
+            relevant_prototypes_per_class[cl] = torch.nonzero(classification_weights[cl])
 
-    visualize(net, test_projectloader, len(classes), device, 'visualised_prototypes', args)
+        
+        
+        # print(relevant_prototypes_per_class)
+        for i in range(classification_weights.size(1)):
+            contains_classes = []
+            for j in range(classification_weights.size(0)):
+                if i in relevant_prototypes_per_class[j]:
+                    contains_classes.append(j)
+            if contains_classes != []:
+                print(i, contains_classes)
+    info = get_image_clusters(net, train_with_path,0 , device)
+    xs = []
+    ys = list(info.keys())
+    for a in info.keys():
+        print(a, info[a])
+        xs.append([info[a]])
+
+    kmeans = KMeans(5)
+    data = np.concatenate(xs)
+    kmeans.fit(data)
+
+    sorted = {}
+    for x, y, c in zip(xs, ys, kmeans.labels_):
+        if not c in sorted.keys():
+            sorted[c] = []
+        
+        sorted[c].append(y)
+
+    for key in sorted.keys():
+        for member in sorted[key]:
+            print(key,member)
+
+    
+    
+    # visualize(net, projectloader, len(classes), device, 'visualised_prototypes', args)
     # testset_img0_path = test_projectloader.dataset.samples[0][0]
     # test_path = os.path.split(os.path.split(testset_img0_path)[0])[0]
     # vis_pred(net, test_path, classes, device, args) 
-    if args.extra_test_image_folder != '':
-        if os.path.exists(args.extra_test_image_folder):   
-            vis_pred_experiments(net, args.extra_test_image_folder, classes, device, args)
+    # if args.extra_test_image_folder != '':
+    #     if os.path.exists(args.extra_test_image_folder):   
+    #         vis_pred_experiments(net, args.extra_test_image_folder, classes, device, args)
+
 
     print("Done!")
 

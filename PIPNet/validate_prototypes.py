@@ -9,13 +9,33 @@ from pipnet.test import eval_pipnet, get_thresholds, eval_ood
 from util.eval_cub_csv import eval_prototypes_cub_parts_csv, get_topk_cub, get_proto_patches_cub
 import torch
 from util.vis_pipnet import visualize, visualize_topk
-from util.visualize_prediction import vis_pred, vis_pred_experiments, vis_pred_experimental
+from util.visualize_prediction import vis_pred, vis_pred_experiments, vis_pred_experimental, check_prototype_locations
 import sys, os
 import random
 import numpy as np
 from shutil import copy
 import matplotlib.pyplot as plt
 from copy import deepcopy
+import json
+from PIL import Image
+
+def calculate_overlap( pred_coordinates, gt_coordinates):
+    x1 = max(pred_coordinates[0][0], gt_coordinates[0][0])  # Find the intersection's top-left x
+    y1 = max(pred_coordinates[0][1], gt_coordinates[0][1])  # Find the intersection's top-left y
+    x2 = min(pred_coordinates[1][0], gt_coordinates[1][0])  # Find the intersection's bottom-right x
+    y2 = min(pred_coordinates[1][1], gt_coordinates[1][1])  # Find the intersection's bottom-right y
+
+    intersection_area = max(0, x2 - x1) * max(0, y2 - y1)  # Ensure non-negative area
+
+    pred_coordinates_area = (pred_coordinates[1][0] - pred_coordinates[0][0]) * (pred_coordinates[1][1] - pred_coordinates[0][1])
+    gt_coordinates_area = (gt_coordinates[1][0] - gt_coordinates[0][0]) * (gt_coordinates[1][1] - gt_coordinates[0][1])
+    union_area = pred_coordinates_area + gt_coordinates_area - intersection_area
+
+    if union_area == 0:  # Handle cases where one or both boxes have zero area
+        return 0.0
+
+    iou = intersection_area / union_area
+    return iou
 
 def run_pipnet(args=None):
 
@@ -150,13 +170,56 @@ def run_pipnet(args=None):
     # log.log_values('log_epoch_overview', epoch, eval_info['top1_accuracy'], eval_info['top5_accuracy'], eval_info['almost_sim_nonzeros'], eval_info['local_size_all_classes'], eval_info['almost_nonzeros'], eval_info['num non-zero prototypes'], train_info['train_accuracy'], train_info['loss'])
     # visualize predictions 
 
-    visualize(net, test_projectloader, len(classes), device, 'visualised_prototypes', args)
+    # visualize(net, test_projectloader, len(classes), device, 'visualised_prototypes', args)
     # testset_img0_path = test_projectloader.dataset.samples[0][0]
     # test_path = os.path.split(os.path.split(testset_img0_path)[0])[0]
     # vis_pred(net, test_path, classes, device, args) 
-    if args.extra_test_image_folder != '':
-        if os.path.exists(args.extra_test_image_folder):   
-            vis_pred_experiments(net, args.extra_test_image_folder, classes, device, args)
+       
+    img_stats = check_prototype_locations(net, args.extra_test_image_folder, classes, device, args)
+
+    for img_stat in img_stats:
+
+        # labels = load_label(image_name + '_label', class_name)['objects']
+        # image = load_suggestion_image(image_name, class_name)
+
+        # for each polygon in the source image, resize the box
+        # look through all the img_stats' prototypes and check for overlap.
+        # Record the overlaps in a file as a table
+        # table should be something like prototypes x labels with results being miou
+
+
+        for label in img_stat.json:
+
+            overlaps = []
+            poly = label['polygon']
+
+
+            h_ratio = args.image_size  / img_stat.height
+            w_ratio = args.image_size / img_stat.width
+            min_x, min_y, max_x, max_y = 10000,10000,0,0
+            for p in poly:
+                min_x = min(min_x, p['x'])
+                min_y = min(min_y, p['y'])
+                max_x = max(max_x, p['x'])
+                max_y = max(max_y, p['y'])
+
+            gt_poly = [[int(min_x * w_ratio), int(min_y * h_ratio)],[int(max_x * w_ratio),int(max_y * h_ratio)]]
+
+            for k, prediction in enumerate(img_stat.prototypes):
+                overlaps.append(calculate_overlap(gt_poly, prediction))
+
+            list.sort(overlaps)
+
+            pred_gt_label = label['classIndex']
+            print(f"best for {pred_gt_label} in {img_stat.image_name} {overlaps[-5:]}")
+            print(f"worst for {pred_gt_label} in {img_stat.image_name} {overlaps[:5]}")
+
+        # for label in labels:
+        #     print(label['polygon'])
+        # print(img_name)
+
+
+    
 
     print("Done!")
 

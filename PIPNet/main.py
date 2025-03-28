@@ -330,10 +330,10 @@ def run_pipnet(args=None):
     visualize(net, projectloader, len(classes), device, 'visualised_prototypes', args)
     testset_img0_path = test_projectloader.dataset.samples[0][0]
     test_path = os.path.split(os.path.split(testset_img0_path)[0])[0]
-    vis_pred(net, test_path, classes, device, args) 
-    if args.extra_test_image_folder != '':
-        if os.path.exists(args.extra_test_image_folder):   
-            vis_pred_experiments(net, args.extra_test_image_folder, classes, device, args)
+    # vis_pred(net, test_path, classes, device, args) 
+    # if args.extra_test_image_folder != '':
+    #     if os.path.exists(args.extra_test_image_folder):   
+    #         vis_pred_experiments(net, args.extra_test_image_folder, classes, device, args)
 
 
     # EVALUATE OOD DETECTION

@@ -117,6 +117,10 @@ def get_args() -> argparse.Namespace:
                         action='store_true',
                         help='Flag that indicates whether to include a trainable bias in the linear classification layer.'
                         )
+    parser.add_argument('--debug',
+                        action='store_true',
+                        help='Flag that indicates whether we are using debug mode'
+                        )
     parser.add_argument('--extra_test_image_folder',
                         type=str,
                         default='./experiments',
@@ -133,12 +137,28 @@ def get_args() -> argparse.Namespace:
                         type=int,
                         default=None,
                         help='How often the evaluation on eval set should be run')
-
     parser.add_argument('--proto_dir',
                         type=str,
                         default=None,
                         help='Where are prototypes going to be drawn and shared from ')
-
+    parser.add_argument('--buffer_type',
+                        type=str,
+                        default=None,
+                        help='what type of buffer storage for cutmix to use, format is \" ((folder|buffer):k)\" ')
+    parser.add_argument('--k',
+                        type=int,
+                        default=10,
+                        help='how many K will be visualized or the size of the buffer overall')
+    parser.add_argument('--patch_size',
+                        type=int,
+                        default=32,
+                        help='What is the size of the patch to be used for visualizing and swapping')
+    parser.add_argument('--feature_folder',
+                        type=str,
+                        help='Where are the features stored in image format?')
+    parser.add_argument('--memory_size',
+                        type=int,
+                        help='Size of the memory buffer')
 
     args = parser.parse_args()
     if len(args.log_dir.split('/'))>2:

@@ -1,0 +1,242 @@
+prototype_num,is_used,purity,description
+0,y,1,"A specific kind of mast color combination "
+1,n,0,n/a
+2,n,0,n/a
+3,n,0,n/a
+4,y,2,"Anchors; numbers on the side of the ship"
+5,y,1,"Elements on the left side that are tall"
+6,n,0,n/a
+7,y,2,"Background towers; Specific mast"
+8,n,0,n/a
+9,n,0,n/a
+10,n,0,n/a
+11,n,0,n/a
+12,y,1,"Specific mast"
+13,n,0,n/a
+14,y,3,"Spefific / control tower; Side of ship; Radar mask configuation"
+15,y,2,"Masts; masts with german flag"
+16,y,2,"Number codes beginning with H; tactical windows? on the side of the side"
+17,n,0,n/a
+18,n,0,n/a
+19,n,0,n/a
+20,n,0,n/a
+21,y,1,"Number codes beginning with M3"
+22,y,1,"Anchor holder on the front of the ship"
+23,y,1,"Front railings of ship "
+24,y,2,"Masts to the right and a specific kind of tower"
+25,y,1,"Angled numbers on the front of the ship"
+26,n,0,n/a
+27,y,1,background
+28,y,3,"Multiply masts; cross looking masts; long straight masts"
+29,y,2,"General masts; masks with maltese flag"
+30,n,0,n/a
+31,y,1,"Specific mast"
+32,y,3,"Front of ship contact with surface of water; back of ship with contact with surface of water; wake"
+33,n,0,n/a
+34,n,0,n/a
+35,n,0,n/a
+36,y,3,"Number code on side of the ship beginning with H; Number code on the side of the ship beginning with L; Square hole on the side of the ship "
+37,n,0,n/a
+38,y,2,"Radar; old boat mast"
+39,y,1,"Long white mast"
+40,y,2,"Kind of mast; kind of mast"
+41,n,0,n/a
+42,n,0,n/a
+43,y,2,"Number code beginning with F; Side of warship"
+44,y,2,"Type of radar; type of radar"
+45,n,0,n/a
+46,y,1,"Telecoms masts"
+47,y,1,"Telecoms masts closer to left side"
+48,n,0,n/a
+49,n,0,n/a
+50,y,1,"drainage holes on sides of boats"
+51,y,2,"Sky; background"
+52,y,1,"Codes beginning with M"
+53,y,1,"Cross mast configuration"
+54,y,3,"Mast; Mast; structure"
+55,y,2,"Telecomms mast; flags "
+56,y,2,"Look out; radar T-shaped"
+57,n,0,n/a
+58,y,2,"walking gallery; something orange"
+59,y,1,"Background"
+60,y,1,"masks with flagss"
+61,y,1,"Code beginning with 70 and red life support thing"
+62,y,2,"Radar; communications mast"
+63,y,1,"Codes beginning with F"
+64,n,0,n/a
+65,y,2,"Tshaped masts; Spherical mast tops"
+66,n,0,n/a
+67,y,2,"Codes beginning with F; side of low angeled vessel"
+68,y,2,"Square mast like structure; pirate ship mast"
+69,n,0,n/a
+70,n,0,n/a
+71,y,1,"Cross mast with structure one top"
+72,y,1,"Round top, square based structure"
+73,y,1,"Railings on the side of the structure "
+74,y,1,"Cross style railing"
+75,y,2,"Number beginning with P; Number beginning with M"
+76,y,1,"Windows on side of boat"
+77,n,0,n/a
+78,n,0,n/a
+79,n,0,n/a
+80,y,1,"circular radar"
+81,y,1,"radar"
+82,n,0,n/a
+83,y,1,"T-shaped numbers of masts"
+84,n,0,n/a
+85,y,2,"Side of vessel; low rise gun"
+86,n,0,n/a
+87,n,0,n/a
+88,n,0,n/a
+89,n,0,n/a
+90,n,0,n/a
+91,y,2,"Numbers beginning with 2; numbers beginning with 3"
+92,n,0,n/a
+93,n,0,n/a
+94,n,0,n/a
+95,y,1,"sky line"
+96,y,1,"one black and one white mast"
+97,n,0,n/a
+98,n,0,n/a
+99,y,3,"Life boats; windows; Codes beginning with A"
+100,n,0,n/a
+101,y,1,"Black radar receivers"
+102,y,3,"Sky; flag; top of structures"
+103,y,1,"Black structures"
+104,n,0,n/a
+105,y,1,"codes beginning with 15"
+106,n,0,n/a
+107,n,0,n/a
+108,n,0,n/a
+109,n,0,n/a
+110,n,0,n/a
+111,n,0,n/a
+112,n,0,n/a
+113,n,0,n/a
+114,n,0,n/a
+115,n,0,n/a
+116,y,1,"Generic masts"
+117,n,0,n/a
+118,n,0,n/a
+119,n,0,n/a
+120,y,2,"Masts; masts with multiple flags"
+121,y,1,"Square liek structure "
+122,y,2,"mast structure; radar dish"
+123,n,0,n/a
+124,y,2,"Anchro points; various numbers on boat front"
+125,y,1,"Colored flags"
+126,n,0,n/a
+127,y,2,"anchor points; cannons"
+128,n,0,n/a
+129,y,1,"ocean"
+130,y,2,"numbers beginning with F; numbers beginning with D"
+131,n,0,n/a
+132,n,0,n/a
+133,n,0,n/a
+134,n,0,n/a
+135,y,2,"mast; radar mast"
+136,n,0,n/a
+137,y,1,"mast"
+138,n,0,n/a
+139,n,0,n/a
+140,n,0,n/a
+141,y,1,"Square mast"
+142,n,0,n/a
+143,n,0,n/a
+144,n,0,n/a
+145,y,1,"Mast"
+146,n,0,n/a
+147,n,0,n/a
+148,n,0,n/a
+149,y,2,"Flag; radar"
+150,n,0,n/a
+151,n,0,n/a
+152,n,0,n/a
+153,n,0,n/a
+154,n,0,n/a
+155,n,0,n/a
+156,n,0,n/a
+157,y,1,"Windows"
+158,n,0,n/a
+159,y,1,"Front of boat"
+160,y,3,"Anchor point; grid; walking gallery"
+161,y,3,"radar; flag; wooden masts"
+162,y,1,"Mast"
+163,y,2,"Square mast; regular mast"
+164,n,0,n/a
+165,n,0,n/a
+166,y,1,"black radar"
+167,n,0,n/a
+168,n,0,n/a
+169,y,1,"specific kind of mast"
+170,y,4,"number beginning with P; number beginning with M; number beginning with A; stripe"
+171,y,1,"number where first number, but not character, is a 6 "
+172,n,0,n/a
+173,y,1,"Loading crane"
+174,n,0,n/a
+175,n,0,n/a
+176,y,1,"telecomms towers"
+177,y,2,"Pirate masts; radar structures"
+178,n,0,n/a
+179,y,1,"side of boat?"
+180,y,2,"side of boat; tower"
+181,n,0,n/a
+182,n,0,n/a
+183,n,0,n/a
+184,n,0,n/a
+185,n,0,n/a
+186,n,0,n/a
+187,n,0,n/a
+188,y,1,"tower"
+189,y,1,"specific triangle configuation on side of modern warships"
+190,n,0,n/a
+191,n,0,n/a
+192,y,1,"small holes on side of boat"
+193,n,0,n/a
+194,n,0,n/a
+195,n,0,n/a
+196,n,0,n/a
+197,n,0,n/a
+198,n,0,n/a
+199,n,0,n/a
+200,n,0,n/a
+201,n,0,n/a
+202,y,1,"Mast"
+203,n,0,n/a
+204,y,1,"front of top structure"
+205,y,1,"mast"
+206,n,0,n/a
+207,y,1,"mast"
+208,y,1,"command tower structure"
+209,y,1,"walking gallery"
+210,y,1,"Ocean"
+211,y,1,"Mast"
+212,n,0,n/a
+213,y,1,"Tree line"
+214,y,1,"Masts with flags"
+215,n,0,n/a
+216,n,0,n/a
+217,n,0,n/a
+218,n,0,n/a
+219,y,1,"Square modern military structures"
+220,n,0,n/a
+221,y,1,"Things beginning with A5"
+222,n,0,n/a
+223,n,0,n/a
+224,y,2,"Mast; mast"
+225,y,3,"mast; mast; mast"
+226,n,0,n/a
+227,n,0,n/a
+228,y,2,"mast; mast"
+229,n,0,n/a
+230,n,0,n/a
+231,n,0,n/a
+232,n,0,n/a
+233,n,0,n/a
+234,n,0,n/a
+235,n,0,n/a
+236,n,0,n/a
+237,n,0,n/a
+238,y,1,"radar"
+239,y,1,"pirate ship masts"
+240,n,0,n/a

@@ -4,12 +4,12 @@ import torch.nn as nn
 from util.args import get_args, save_args, get_optimizer_nn
 from util.data import get_dataloaders
 from util.func import init_weights_xavier
-from pipnet.train import train_pipnet
+from util.vis_pipnet import get_img_coordinates
+from pipnet.train import purity_analysis
 from pipnet.test import eval_pipnet, get_thresholds, eval_ood
-from util.eval_cub_csv import eval_prototypes_cub_parts_csv, get_topk_cub, get_proto_patches_cub
 import torch
-from util.vis_pipnet import visualize, visualize_topk
-from util.visualize_prediction import vis_pred, vis_pred_experiments, vis_pred_experimental
+from util.vis_pipnet import visualize, visualize_topk, prototype_buffer_update
+from util.visualize_prediction import vis_pred, vis_pred_experiments
 import sys, os
 import random
 import numpy as np
@@ -119,6 +119,8 @@ def run_pipnet(args=None):
             print("Classification layer initialized with mean", torch.mean(net.module._classification.weight).item())
     
     # Define classification loss function and scheduler
+    criterion = nn.NLLLoss(reduction='mean').to(device)
+    scheduler_net = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer_net, T_max=len(trainloader_pretraining)*args.epochs_pretrain, eta_min=args.lr_block/100., last_epoch=-1)
 
     # Forward one batch through the backbone to get the latent output size
     with torch.no_grad():
@@ -138,22 +140,30 @@ def run_pipnet(args=None):
         log.create_log('log_epoch_overview', 'epoch', 'test_top1_acc', 'test_top5_acc', 'almost_sim_nonzeros', 'local_size_all_classes','almost_nonzeros_pooled', 'num_nonzero_prototypes', 'mean_train_acc', 'mean_train_loss_during_epoch')
     
     
-    if args.vis_top_k:
-        with torch.no_grad():
-            topks = visualize_topk(net, test_projectloader, len(classes), device, 'visualised_pretrained_prototypes_topk', args)
-        
-    
+    lrs_pretrain_net = []
+    proto_dir_name = "visualized_database"
+            
    
+    train_info = purity_analysis(net, trainloader_normal, optimizer_net, optimizer_classifier,
+                                scheduler_net, None, criterion, epoch,
+                                    args.epochs, device, f'{args.proto_dir}/{proto_dir_name}', args, pretrain=False, finetune=False,
+                                    prototype_buffer=args.buffer_type.split(':')[0])
+                
     net.eval()
-    # torch.save({'model_state_dict': net.state_dict(), 'optimizer_net_state_dict': optimizer_net.state_dict(), 'optimizer_classifier_state_dict': optimizer_classifier.state_dict()}, os.path.join(os.path.join(args.log_dir, 'checkpoints'), 'net_trained_last'))
-    # eval_info = eval_pipnet(net, testloader, epoch, device, log)
-    # log.log_values('log_epoch_overview', epoch, eval_info['top1_accuracy'], eval_info['top5_accuracy'], eval_info['almost_sim_nonzeros'], eval_info['local_size_all_classes'], eval_info['almost_nonzeros'], eval_info['num non-zero prototypes'], train_info['train_accuracy'], train_info['loss'])
-    # visualize predictions 
+    torch.save({'model_state_dict': net.state_dict(), 'optimizer_net_state_dict': optimizer_net.state_dict(), 'optimizer_classifier_state_dict': optimizer_classifier.state_dict()}, os.path.join(os.path.join(args.log_dir, 'checkpoints'), 'net_trained_last'))
+    eval_info = eval_pipnet(net, testloader, epoch, device, log)
+    log.log_values('log_epoch_overview', epoch, eval_info['top1_accuracy'], eval_info['top5_accuracy'], eval_info['almost_sim_nonzeros'], eval_info['local_size_all_classes'], eval_info['almost_nonzeros'], eval_info['num non-zero prototypes'], train_info['train_accuracy'], train_info['loss'])
 
-    visualize(net, test_projectloader, len(classes), device, 'visualised_prototypes', args)
-    # testset_img0_path = test_projectloader.dataset.samples[0][0]
-    # test_path = os.path.split(os.path.split(testset_img0_path)[0])[0]
-    # vis_pred(net, test_path, classes, device, args) 
+    topks = visualize_topk(net, projectloader, len(classes), device, 'visualised_prototypes_topk', args)
+    # set weights of prototypes that are never really found in projection set to 0
+    set_to_zero = []
+
+        
+    # visualize predictions 
+    visualize(net, projectloader, len(classes), device, 'visualised_prototypes', args)
+    testset_img0_path = test_projectloader.dataset.samples[0][0]
+    test_path = os.path.split(os.path.split(testset_img0_path)[0])[0]
+    vis_pred(net, test_path, classes, device, args) 
     if args.extra_test_image_folder != '':
         if os.path.exists(args.extra_test_image_folder):   
             vis_pred_experiments(net, args.extra_test_image_folder, classes, device, args)
@@ -171,11 +181,11 @@ if __name__ == '__main__':
     if not os.path.isdir(args.log_dir):
         os.mkdir(args.log_dir)
     
-    sys.stdout.close()
-    sys.stderr.close()
-    sys.stdout = open(print_dir, 'w')
-    sys.stderr = open(tqdm_dir, 'w')
+    # sys.stdout.close()
+    # sys.stderr.close()
+    # sys.stdout = open(print_dir, 'w')
+    # sys.stderr = open(tqdm_dir, 'w')
     run_pipnet(args)
     
-    sys.stdout.close()
-    sys.stderr.close()
+    # sys.stdout.close()
+    # sys.stderr.close()

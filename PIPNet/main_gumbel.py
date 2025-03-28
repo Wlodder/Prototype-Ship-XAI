@@ -1,12 +1,13 @@
-from pipnet.pipnet import PIPNet, get_network
+from pipnet.pipnet import PIPNet, get_network, PIPNetSampler
+import shutil
 from util.log import Log
 import torch.nn as nn
 from util.args import get_args, save_args, get_optimizer_nn
 from util.data import get_dataloaders
 from util.func import init_weights_xavier
 from util.vis_pipnet import get_img_coordinates
-# from pipnet.train import train_pipnet_cutmix
-from pipnet.train_memory import train_pipnet_memory as train_pipnet_cutmix
+# from pipnet.train import train_pipnet
+from pipnet.train_gumbel import train_pipnet_gumbel as train_pipnet
 from pipnet.test import eval_pipnet, get_thresholds, eval_ood
 from util.eval_cub_csv import eval_prototypes_cub_parts_csv, get_topk_cub, get_proto_patches_cub
 import torch
@@ -106,9 +107,6 @@ def run_pipnet(args=None):
                 print("Classification layer initialized with mean", torch.mean(net.module._classification.weight).item())
                 if args.bias:
                     torch.nn.init.constant_(net.module._classification.bias, val=0.)
-            # else: #uncomment these lines if you want to load the optimizer too
-            #     if 'optimizer_classifier_state_dict' in checkpoint.keys():
-            #         optimizer_classifier.load_state_dict(checkpoint['optimizer_classifier_state_dict'])
             
         else:
             net.module._add_on.apply(init_weights_xavier)
@@ -120,68 +118,19 @@ def run_pipnet(args=None):
 
             print("Classification layer initialized with mean", torch.mean(net.module._classification.weight).item())
     
-    # Define classification loss function and scheduler
-    criterion = nn.NLLLoss(reduction='mean').to(device)
-    scheduler_net = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer_net, T_max=len(trainloader_pretraining)*args.epochs_pretrain, eta_min=args.lr_block/100., last_epoch=-1)
-
-    # Forward one batch through the backbone to get the latent output size
     with torch.no_grad():
         xs1, _, _ = next(iter(trainloader))
         xs1 = xs1.to(device)
         proto_features, _, _ = net(xs1)
         wshape = proto_features.shape[-1]
         args.wshape = wshape #needed for calculating image patch size
-        print("Output shape: ", proto_features.shape)
-    
-    if net.module._num_classes == 2:
-        # Create a csv log for storing the test accuracy, F1-score, mean train accuracy and mean loss for each epoch
-        log.create_log('log_epoch_overview', 'epoch', 'test_top1_acc', 'test_f1', 'almost_sim_nonzeros', 'local_size_all_classes','almost_nonzeros_pooled', 'num_nonzero_prototypes', 'mean_train_acc', 'mean_train_loss_during_epoch')
-        print("Your dataset only has two classes. Is the number of samples per class similar? If the data is imbalanced, we recommend to use the --weighted_loss flag to account for the imbalance.")
-    else:
-        # Create a csv log for storing the test accuracy (top 1 and top 5), mean train accuracy and mean loss for each epoch
-        log.create_log('log_epoch_overview', 'epoch', 'test_top1_acc', 'test_top5_acc', 'almost_sim_nonzeros', 'local_size_all_classes','almost_nonzeros_pooled', 'num_nonzero_prototypes', 'mean_train_acc', 'mean_train_loss_during_epoch')
-    
-    
-    lrs_pretrain_net = []
-    proto_dir_name = "visualized_database"
-    # PRETRAINING PROTOTYPES PHASE
-    for epoch in range(1, args.epochs_pretrain+1):
-        for param in params_to_train:
-            param.requires_grad = True
-        for param in net.module._add_on.parameters():
-            param.requires_grad = True
-        for param in net.module._classification.parameters():
-            param.requires_grad = False
-        for param in params_to_freeze:
-            param.requires_grad = True # can be set to False when you want to freeze more layers
-        for param in params_backbone:
-            param.requires_grad = False #can be set to True when you want to train whole backbone (e.g. if dataset is very different from ImageNet)
+        print("Output shape: ", proto_features.shape, flush=True)
         
-        print("\nPretrain Epoch", epoch, "with batch size", trainloader_pretraining.batch_size)
-        
-        # Pretrain prototypes
-        train_info = train_pipnet_cutmix(net, trainloader_pretraining, optimizer_net, optimizer_classifier,
-                                          scheduler_net, None, criterion, epoch, args.epochs_pretrain,
-                                            device, f'{args.proto_dir}/{proto_dir_name}', args, pretrain=True, finetune=False)
-        lrs_pretrain_net+=train_info['lrs_net']
-        plt.clf()
-        plt.plot(lrs_pretrain_net)
-        plt.savefig(os.path.join(args.log_dir,'lr_pretrain_net.png'))
-        log.log_values('log_epoch_overview', epoch, "n.a.", "n.a.", "n.a.", "n.a.", "n.a.", "n.a.", "n.a.", train_info['loss'])
+    # shutil.rmtree(os.path.join(args.log_dir, 'visualised_prototypes_next'), ignore_errors=True)
+    # visualize(net, projectloader, len(classes), device, 'visualised_prototypes_next', args)
+    sampler = PIPNetSampler(net, args.num_features, args)
     
-    if args.state_dict_dir_net == '':
-        net.eval()
-        torch.save({'model_state_dict': net.state_dict(), 'optimizer_net_state_dict': optimizer_net.state_dict()}, os.path.join(os.path.join(args.log_dir, 'checkpoints'), 'net_pretrained'))
-        net.train()
-    with torch.no_grad():
-        if 'convnext' in args.net and args.epochs_pretrain > 0:
-            _, buffer = prototype_buffer_update(net, projectloader, len(classes), device, 'visualised_pretrained_prototypes_topk', args, k=args.k)
-            # print(tensors_per_prototype.keys())
-            # print(tensors_per_prototype[0][0].size())
-            # visualize(net, projectloader, len(classes), device, proto_dir_name, args)
-            
-            x = 0
-        
+
     # SECOND TRAINING PHASE
     # re-initialize optimizers and schedulers for second training phase
     optimizer_net, optimizer_classifier, params_to_freeze, params_to_train, params_backbone = get_optimizer_nn(net, args)            
@@ -196,6 +145,7 @@ def run_pipnet(args=None):
     for param in net.module._classification.parameters():
         param.requires_grad = True
     
+    criterion = nn.NLLLoss(reduction='mean').to(device)
     frozen = True
     lrs_net = []
     lrs_classifier = []
@@ -249,10 +199,9 @@ def run_pipnet(args=None):
                     print("Classifier bias: ", net.module._classification.bias)
                 torch.set_printoptions(profile="default")
 
-        train_info = train_pipnet_cutmix(net, trainloader_normal, optimizer_net, optimizer_classifier,
+        train_info = train_pipnet(sampler, trainloader, optimizer_net, optimizer_classifier,
                                    scheduler_net, scheduler_classifier, criterion, epoch,
-                                     args.epochs, device, f'{args.proto_dir}/{proto_dir_name}', args, pretrain=False, finetune=finetune,
-                                     prototype_buffer=buffer)
+                                     args.epochs, device, pretrain=False, finetune=finetune, args=args)
         lrs_net+=train_info['lrs_net']
         lrs_classifier+=train_info['lrs_class']
         # Evaluate model
@@ -261,7 +210,8 @@ def run_pipnet(args=None):
             net.eval()
             with torch.no_grad():
                 eval_info = eval_pipnet(net, testloader, epoch, device, log)
-                log.log_values('log_epoch_overview', epoch, eval_info['top1_accuracy'], eval_info['top5_accuracy'], eval_info['almost_sim_nonzeros'], eval_info['local_size_all_classes'], eval_info['almost_nonzeros'], eval_info['num non-zero prototypes'], train_info['train_accuracy'], train_info['loss'])
+                visualize(net, projectloader, len(classes), device, 'visualised_prototypes_next', args)
+                # log.log_values('log_epoch_overview', epoch, eval_info['top1_accuracy'], eval_info['top5_accuracy'], eval_info['almost_sim_nonzeros'], eval_info['local_size_all_classes'], eval_info['almost_nonzeros'], eval_info['num non-zero prototypes'], train_info['train_accuracy'], train_info['loss'])
             
         with torch.no_grad():
             net.eval()
@@ -272,9 +222,10 @@ def run_pipnet(args=None):
                 torch.save({'model_state_dict': net.state_dict(), 'optimizer_net_state_dict': optimizer_net.state_dict(), 'optimizer_classifier_state_dict': optimizer_classifier.state_dict()}, os.path.join(os.path.join(args.log_dir, 'checkpoints'), 'net_trained_%s'%str(epoch)))            
         
             if args.visualize_epoch_interval != None and epoch % args.visualize_epoch_interval == 0:
+                shutil.rmtree(os.path.join(args.log_dir, 'visualised_prototypes_next'), ignore_errors=True)
+                visualize(net, projectloader, len(classes), device, 'visualised_prototypes_next', args)
                 _, buffer = prototype_buffer_update(net, projectloader, len(classes), device, f'{epoch}_visualised_prototypes_topk', args, k=args.k)
                 proto_dir_name = f'visualized_database_{epoch}'
-                print(buffer)
                 # visualize(net, projectloader, len(classes), device, proto_dir_name, args)
 
             # save learning rate in figure
