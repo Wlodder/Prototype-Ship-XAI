@@ -10,9 +10,10 @@ import torch.optim
     Utility functions for handling parsed arguments
 
 """
-def get_args() -> argparse.Namespace:
+def get_args(parser=None) -> argparse.Namespace:
 
-    parser = argparse.ArgumentParser('Train a PIP-Net')
+    if parser == None:
+        parser = argparse.ArgumentParser('Train a PIP-Net')
     parser.add_argument('--dataset',
                         type=str,
                         default='CUB-200-2011',

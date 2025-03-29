@@ -1,4 +1,5 @@
 import torch
+import os
 import argparse
 from prototype_management import PrototypeManager
 from pipnet.pipnet import PIPNet, get_network
@@ -78,7 +79,8 @@ def split_and_merge_prototypes(args=None):
             prototype_indices,
             n_clusters=args.n_clusters,
             adaptive=args.adaptive_clustering,
-            visualize=args.visualize_results
+            visualize=args.visualize_results,
+            algorithm=args.clustering_algorithm  # Use the specified clustering algorithm
         )
         
         # Find prototypes that are actually polysemantic
@@ -95,8 +97,16 @@ def split_and_merge_prototypes(args=None):
             
             # Expand the model with new prototypes
             print(f"Expanding model with split prototypes (scaling={args.splitting_scale})...")
+            
+            # Reference dataloader for manifold projection (if enabled)
+            ref_dataloader = trainloader_normal if args.use_manifold_projection else None
+            
             expanded_model, prototype_mapping = prototype_manager.expand_model_with_split_prototypes(
-                poly_results, scaling=args.splitting_scale
+                poly_results, 
+                scaling=args.splitting_scale,
+                use_adaptive_expansion=args.use_adaptive_expansion,
+                manifold_projection=args.use_manifold_projection,
+                reference_dataloader=ref_dataloader
             )
             
             print(f"Model expanded from {num_prototypes} to {expanded_model.module._num_prototypes} prototypes")
@@ -111,6 +121,57 @@ def split_and_merge_prototypes(args=None):
                     'polysemantic_prototypes': polysemantic_prototypes
                 }, save_path)
                 print(f"Expanded model saved to {save_path}")
+            
+            # Visualize the expanded model prototypes
+            if args.visualize_results:
+                print("\nVisualizing prototypes after splitting...")
+                # Create visualization directory
+                vis_dir = os.path.join(args.log_dir, "visualizations", "after_splitting")
+                os.makedirs(vis_dir, exist_ok=True)
+                
+                # First, create a gallery of all prototypes
+                prototype_manager.create_prototype_gallery(
+                    trainloader_normal,
+                    output_dir=vis_dir,
+                    n_samples=5,
+                    n_cols=5,
+                    prototype_indices=prototype_indices,
+                    max_prototypes=100,
+                    sort_by_weight=True
+                )
+                
+                # Then, visualize detailed activation examples for modified prototypes
+                affected_prototypes = []
+                
+                # Include original prototypes
+                affected_prototypes.extend(polysemantic_prototypes)
+                
+                # Include new prototypes created from split
+                for proto_idx, mappings in prototype_mapping.items():
+                    if len(mappings) > 1:  # This prototype was split
+                        # Skip the first since it's the original prototype
+                        affected_prototypes.extend(mappings[1:])
+                
+                # Visualize the affected prototypes with their top activations
+                prototype_manager.visualize_prototypes_after_modification(
+                    trainloader_normal,
+                    affected_prototypes,
+                    operation_name="Split",
+                    n_samples=10,
+                    output_dir=os.path.join(vis_dir, "activations"),
+                    max_prototypes=50
+                )
+                
+                # Create heatmap visualizations
+                prototype_manager.visualize_prototype_heatmaps(
+                    trainloader_normal,
+                    affected_prototypes,
+                    n_samples=3,
+                    output_dir=os.path.join(vis_dir, "heatmaps"),
+                    max_prototypes=20
+                )
+                
+                print(f"Visualizations saved to {vis_dir}")
     
     # Step 3: Identify and merge similar prototypes
     if args.merge_prototypes:
@@ -156,6 +217,47 @@ def split_and_merge_prototypes(args=None):
                         'merged_pairs': pairs_to_merge
                     }, save_path)
                     print(f"Merged model saved to {save_path}")
+                
+                # Visualize the merged model prototypes
+                if args.visualize_results:
+                    print("\nVisualizing prototypes after merging...")
+                    # Create visualization directory
+                    vis_dir = os.path.join(args.log_dir, "visualizations", "after_merging")
+                    os.makedirs(vis_dir, exist_ok=True)
+                    
+                    # First, create a gallery of all prototypes
+                    prototype_manager.create_prototype_gallery(
+                        trainloader_normal,
+                        output_dir=vis_dir,
+                        n_samples=5,
+                        n_cols=5,
+                        max_prototypes=100,
+                        sort_by_weight=True
+                    )
+                    
+                    # Collect affected prototypes (first elements from pairs - these are the ones that remain)
+                    affected_prototypes = [p1 for p1, _ in pairs_to_merge]
+                    
+                    # Visualize the affected prototypes with their top activations
+                    prototype_manager.visualize_prototypes_after_modification(
+                        trainloader_normal,
+                        affected_prototypes,
+                        operation_name="Merge",
+                        n_samples=10,
+                        output_dir=os.path.join(vis_dir, "activations"),
+                        max_prototypes=50
+                    )
+                    
+                    # Create heatmap visualizations
+                    prototype_manager.visualize_prototype_heatmaps(
+                        trainloader_normal,
+                        affected_prototypes,
+                        n_samples=3,
+                        output_dir=os.path.join(vis_dir, "heatmaps"),
+                        max_prototypes=20
+                    )
+                    
+                    print(f"Visualizations saved to {vis_dir}")
     
     print("\nProcess completed successfully!")
 
@@ -181,6 +283,13 @@ if __name__ == "__main__":
                         help='Scaling factor for split prototypes (controls how different they are)')
     parser.add_argument('--save_expanded_model', action='store_true', 
                         help='Save the model with expanded prototypes')
+    parser.add_argument('--clustering_algorithm', type=str, default='kmeans',
+                        choices=['kmeans', 'hdbscan', 'gmm', 'spectral'],
+                        help='Clustering algorithm to use for prototype splitting')
+    parser.add_argument('--use_adaptive_expansion', action='store_true', default=True,
+                        help='Use adaptive step size when expanding prototypes')
+    parser.add_argument('--use_manifold_projection', action='store_true', default=True,
+                        help='Project new prototypes onto the prototype manifold')
     
     # Merging options
     parser.add_argument('--merge_prototypes', action='store_true',
@@ -205,6 +314,12 @@ if __name__ == "__main__":
     # Visualization options
     parser.add_argument('--visualize_results', action='store_true', default=True,
                         help='Visualize results of analysis')
+    parser.add_argument('--visualization_dir', type=str, default=None,
+                        help='Custom directory for saving visualizations')
+    parser.add_argument('--vis_samples', type=int, default=10,
+                        help='Number of samples to show per prototype in visualizations')
+    parser.add_argument('--vis_max_prototypes', type=int, default=50,
+                        help='Maximum number of prototypes to visualize')
     
     # Get default PIPNet arguments
     args = get_args(parser)

@@ -12,10 +12,9 @@ import torch.nn as nn
 from util.args import get_args, save_args, get_optimizer_nn
 from util.data import get_dataloaders
 from util.func import init_weights_xavier
-from util.vis_pipnet import visualize, visualize_topk, visualize_prototypes, visualize_prototype
+from util.vis_pipnet import visualize,  visualize_prototypes, visualize_prototype
 from util.pure_expander import expand_pipnet_with_pure_centroids, expand_pipnet_with_pure_centroids_trajectory, find_on_manifold_prototypes
 from util.proto_max import *
-from util.proto_program import visualize_prototype_with_program
 # from pipnet.train import train_pipnet_memory
 import torch
 from util.pure_vis import *

@@ -6,7 +6,7 @@ from copy import deepcopy
 import copy
 import matplotlib.pyplot as plt
 
-from pure import PURE
+from util.pure import PURE
 
 
 def expand_add_on_layer(original_add_on, pure_results_dict, original_num_prototypes, num_new_prototypes):
