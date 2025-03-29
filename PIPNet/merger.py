@@ -74,7 +74,15 @@ def split_and_merge_prototypes(args=None):
         print("\n--- SPLITTING POLYSEMANTIC PROTOTYPES ---")
         
         # Analyze the selected prototypes
-        split_results = prototype_manager.split_multiple_prototypes(
+        # split_results = prototype_manager.split_multiple_prototypes(
+        #     trainloader_normal,
+        #     prototype_indices,
+        #     n_clusters=args.n_clusters,
+        #     adaptive=args.adaptive_clustering,
+        #     visualize=args.visualize_results,
+        #     algorithm=args.clustering_algorithm  # Use the specified clustering algorithm
+        # )
+        split_results = prototype_manager.split_multiple_prototypes_multi_depth(
             trainloader_normal,
             prototype_indices,
             n_clusters=args.n_clusters,

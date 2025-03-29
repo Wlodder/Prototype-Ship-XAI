@@ -8,6 +8,7 @@ from tqdm import tqdm
 from sklearn.metrics import silhouette_score
 from typing import List, Dict, Tuple, Optional, Union, Any
 from copy import deepcopy
+from util.attribution_analyzer import MultiLayerAttributionAnalyzer
 import matplotlib.pyplot as plt
 
 class PrototypeManager:
@@ -329,6 +330,57 @@ class PrototypeManager:
         plt.tight_layout()
         plt.show()
 
+    def split_polysemantic_prototype_multilayer(self, dataloader, prototype_idx, 
+                                            layer_indices=[-1, -5, -10], 
+                                            n_clusters=None, visualize=True, 
+                                            adaptive=True, max_clusters=5,
+                                            clustering_method='hdbscan'):
+        """
+        Enhanced version of split_polysemantic_prototype that uses attributions 
+        from multiple network layers.
+        
+        Args:
+            dataloader: DataLoader containing the dataset
+            prototype_idx: Index of the prototype to analyze
+            layer_indices: List of layer indices to analyze (negative indices supported)
+            n_clusters: Number of clusters to create (if None, determined automatically)
+            visualize: Whether to visualize the results
+            adaptive: Whether to adaptively determine the number of clusters
+            max_clusters: Maximum number of clusters to consider
+            clustering_method: Clustering method to use
+            
+        Returns:
+            Dictionary containing split results
+        """
+        # Initialize the multi-layer analyzer
+        analyzer = MultiLayerAttributionAnalyzer(self.model, device=self.device)
+        
+        # Perform the multi-layer analysis
+        results = analyzer.analyze_prototype(
+            dataloader=dataloader,
+            prototype_idx=prototype_idx,
+            layer_indices=layer_indices,
+            n_clusters=n_clusters,
+            adaptive=adaptive,
+            max_clusters=max_clusters,
+            clustering_method=clustering_method,
+            visualize=visualize
+        )
+        
+        # Extract the relevant information for prototype splitting
+        return {
+            'prototype_idx': prototype_idx,
+            'is_polysemantic': results['is_polysemantic'],
+            'n_clusters': results['n_clusters'],
+            'silhouette_score': results['silhouette_score'],
+            'cluster_labels': results['cluster_labels'],
+            'centroids': results['centroids'],
+            'circuits': results['circuits'],
+            'top_samples': results['top_samples'],
+            'top_activations': results['top_activations'],
+            'layer_indices': results['layer_indices']
+        }
+
     def split_polysemantic_prototype(self, dataloader, prototype_idx, n_clusters=None, 
                                     visualize=True, adaptive=True, max_clusters=5):
         """
@@ -446,6 +498,41 @@ class PrototypeManager:
             results[proto_idx] = split_result
             
         return results
+
+    def split_multiple_prototypes_multi_depth(self, dataloader, prototype_indices, n_clusters=None, 
+                                 visualize=True, adaptive=True, max_clusters=5,
+                                 algorithm='kmeans'):
+        """
+        Split multiple prototypes and return their results.
+        
+        Args:
+            dataloader: DataLoader containing the dataset
+            prototype_indices: List of indices of prototypes to analyze
+            n_clusters: Number of clusters per prototype
+            visualize: Whether to visualize the results
+            adaptive: Whether to adaptively determine the number of clusters
+            max_clusters: Maximum number of clusters to consider
+            algorithm: Clustering algorithm to use ('kmeans', 'hdbscan', 'gmm', or 'spectral')
+            
+        Returns:
+            Dictionary mapping prototype indices to their split results
+        """
+        analyzer = MultiLayerAttributionAnalyzer(self.model, device=self.device)
+        results = {}
+
+        for proto_idx in prototype_indices:
+            split_result = analyzer.analyze_prototype(
+                dataloader=dataloader,
+                prototype_idx=proto_idx,  # Choose any prototype to analyze
+                layer_indices=[-1, -3, -5, -10],  # Analyze at different depths
+                adaptive=True,
+                clustering_method='hdbscan',
+                visualize=True
+            )
+            results[proto_idx] = split_result
+            
+        return results
+    
     
     def project_to_prototype_manifold(self, new_prototypes, reference_dataloader=None, steps=10):
         """
