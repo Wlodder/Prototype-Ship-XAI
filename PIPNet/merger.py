@@ -107,15 +107,24 @@ def split_and_merge_prototypes(args=None):
             print(f"Expanding model with split prototypes (scaling={args.splitting_scale})...")
             
             # Reference dataloader for manifold projection (if enabled)
-            ref_dataloader = trainloader_normal if args.use_manifold_projection else None
+            # ref_dataloader = trainloader_normal if args.use_manifold_projection else None
             
-            expanded_model, prototype_mapping = prototype_manager.expand_model_with_split_prototypes(
-                poly_results, 
-                scaling=args.splitting_scale,
-                use_adaptive_expansion=args.use_adaptive_expansion,
-                manifold_projection=args.use_manifold_projection,
-                reference_dataloader=ref_dataloader
-            )
+            # expanded_model, prototype_mapping = prototype_manager.expand_model_with_split_prototypes(
+            #     poly_results, 
+            #     scaling=args.splitting_scale,
+            #     use_adaptive_expansion=args.use_adaptive_expansion,
+            #     manifold_projection=args.use_manifold_projection,
+            #     reference_dataloader=ref_dataloader
+            # )
+            for prototype in polysemantic_prototypes:
+                expanded_model, prototype_mapping = prototype_manager.split_prototype_with_centroids(
+                    poly_results,
+                    proto_idx=prototype,
+                    step_size=args.splitting_scale
+                )
+
+            expanded_model = prototype_manager.finetune_split_prototypes(split_results,expanded_model, prototype_mapping)
+
             
             print(f"Model expanded from {num_prototypes} to {expanded_model.module._num_prototypes} prototypes")
             print("Prototype mapping:", prototype_mapping)

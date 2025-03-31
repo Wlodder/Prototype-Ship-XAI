@@ -524,13 +524,15 @@ class PrototypeManager:
             split_result = analyzer.analyze_prototype(
                 dataloader=dataloader,
                 prototype_idx=proto_idx,  # Choose any prototype to analyze
-                layer_indices=[-1, -3, -5, -10],  # Analyze at different depths
+                layer_indices=[-2, -3, -4],  # Analyze at different depths
                 adaptive=True,
                 clustering_method='hdbscan',
-                visualize=True
+                visualize=True,
             )
             results[proto_idx] = split_result
-            
+
+        html = analyzer.create_activation_patch_visualization(results, prototype_indices)
+
         return results
     
     
@@ -811,6 +813,157 @@ class PrototypeManager:
         
         return self.model, prototype_mapping
 
+
+    def finetune_split_prototypes(self, split_results, expanded_model, mapping, 
+                                learning_rate=0.001, epochs=5):
+        """Fine-tune split prototypes with supervision from cluster assignments"""
+        # Set up optimizer for prototype weights only
+        proto_params = []
+        for proto_idx, new_indices in mapping.items():
+            # Add parameters for original and new prototypes
+            for idx in new_indices:
+                proto_params.append({
+                    'params': expanded_model.module._add_on[0].weight[idx], 
+                    'lr': learning_rate
+                })
+        
+        optimizer = torch.optim.Adam(proto_params)
+        
+        # Training loop
+        for epoch in range(epochs):
+            epoch_loss = 0
+            
+            # Process each split prototype
+            for proto_idx, new_indices in mapping.items():
+                result = split_results[proto_idx]
+                samples = result['top_samples'].to(self.device)
+                cluster_labels = result['cluster_labels']
+                
+                # Forward pass
+                proto_features, pooled, _ = expanded_model(samples)
+                
+                # Compute specialization loss
+                loss = 0
+                for cluster_idx, proto_idx in enumerate(new_indices):
+                    # Get samples from this cluster
+                    cluster_mask = (cluster_labels == cluster_idx)
+                    
+                    if not np.any(cluster_mask):
+                        continue
+                    
+                    # Positive examples: Encourage high activation
+                    pos_activations = pooled[cluster_mask, proto_idx]
+                    pos_loss = -torch.mean(pos_loss)
+                    
+                    # Negative examples: Encourage low activation
+                    neg_activations = pooled[~cluster_mask, proto_idx]
+                    neg_loss = torch.mean(F.relu(neg_activations - 0.1))
+                    
+                    # Specialization loss
+                    loss += pos_loss + neg_loss
+                
+                # Backprop and update
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()
+                
+                epoch_loss += loss.item()
+            
+            print(f"Epoch {epoch+1}/{epochs}, Loss: {epoch_loss:.4f}")
+        
+        return expanded_model
+
+
+    def split_prototype_with_centroids(self, split_results, proto_idx, step_size=0.5):
+        """Split prototype by directly applying centroid steps to weights"""
+        # Create a copy of the model
+        model = deepcopy(self.model.module)
+        result = split_results[proto_idx]
+        
+        # Get centroids and determine number of new prototypes needed
+        n_clusters = len(np.unique(result['cluster_labels']))
+        n_new_prototypes = n_clusters - 1  # First cluster uses original prototype
+        
+        # Choose the most informative layer for centroids
+        layer_idx = -1  # Default to add-on layer
+        for idx in sorted(result['centroids'].keys(), reverse=True):
+            layer_idx = idx
+            break
+        
+        # Get original prototype weights
+        original_weights = model._add_on[0].weight.data[proto_idx].clone()
+        original_shape = original_weights.shape
+        
+        # 1. Expand the model's capacity
+        old_num_protos = model._num_prototypes
+        new_num_protos = old_num_protos + n_new_prototypes
+        
+        # Create expanded add-on layer
+        old_addon = model._add_on[0]
+        new_addon = nn.Conv2d(
+            in_channels=old_addon.in_channels,
+            out_channels=new_num_protos,
+            kernel_size=old_addon.kernel_size,
+            stride=old_addon.stride,
+            padding=old_addon.padding,
+            bias=(old_addon.bias is not None)
+        )
+        
+        # Copy original weights
+        with torch.no_grad():
+            new_addon.weight.data[:old_num_protos] = old_addon.weight.data
+            if old_addon.bias is not None:
+                new_addon.bias.data[:old_num_protos] = old_addon.bias.data
+        
+        # Create expanded classification layer
+        old_class = model._classification
+        new_class = nn.Linear(
+            in_features=new_num_protos,
+            out_features=model._num_classes,
+            bias=(old_class.bias is not None)
+        )
+        
+        # Copy original weights
+        with torch.no_grad():
+            new_class.weight.data[:, :old_num_protos] = old_class.weight.data
+            if old_class.bias is not None:
+                new_class.bias.data = old_class.bias.data
+        
+        # 2. Add the new prototypes with centroids
+        next_idx = old_num_protos
+        mapping = {proto_idx: [proto_idx]}
+        
+        with torch.no_grad():
+            # First cluster: modify original prototype
+            centroid = result['centroids'][layer_idx][0].to(self.device)
+            reshaped_centroid = centroid.view(-1)[:original_shape[0]].view(original_shape)
+            new_addon.weight.data[proto_idx] = original_weights + step_size * reshaped_centroid
+            
+            # Additional clusters: create new prototypes
+            for cluster_idx in range(1, n_clusters):
+                centroid = result['centroids'][layer_idx][cluster_idx].to(self.device)
+                reshaped_centroid = centroid.view(-1)[:original_shape[0]].view(original_shape)
+                
+                # Create new prototype
+                new_addon.weight.data[next_idx] = original_weights + step_size * reshaped_centroid
+                
+                # Copy classification weights
+                new_class.weight.data[:, next_idx] = old_class.weight.data[:, proto_idx].clone()
+                
+                # Add to mapping
+                mapping[proto_idx].append(next_idx)
+                next_idx += 1
+        
+        # Update model
+        model._add_on[0] = new_addon
+        model._classification = new_class
+        model._num_prototypes = new_num_protos
+        
+        # Wrap model and return
+        expanded_model = nn.DataParallel(model.to(self.device))
+        self.model = expanded_model
+        return expanded_model, mapping
+
     def expand_model_with_split_prototypes(self, split_results, scaling=0.5, 
                                          use_adaptive_expansion=True,
                                          manifold_projection=True,
@@ -949,7 +1102,142 @@ class PrototypeManager:
         centroids = torch.tensor(centroids).reshape(n_clusters, *circuits.shape[1:])
         
         return cluster_labels, centroids
-    
+
+    def visualize_multi_layer_umap_interactive(self, circuits, cluster_labels, prototype_idx, 
+                                         samples, layer_indices=None, layer_names=None):
+        """
+        Create interactive UMAP visualizations with patch preview on hover.
+        
+        Args:
+            circuits: Dictionary of circuit attributions
+            cluster_labels: Cluster assignment for each sample
+            prototype_idx: Index of the prototype being analyzed
+            samples: Original input samples for generating previews
+            layer_indices: Specific layer indices to visualize (defaults to all)
+            layer_names: Optional dictionary of {layer_idx: display_name} for labels
+            
+        Returns:
+            Dictionary of Plotly figures for each layer
+        """
+        import plotly.graph_objects as go
+        from plotly.subplots import make_subplots
+        import umap
+        from sklearn.preprocessing import StandardScaler
+        import numpy as np
+        import base64
+        from io import BytesIO
+        from PIL import Image
+        import torch
+        
+        # Determine which layers to visualize
+        if layer_indices is None:
+            layer_indices = sorted(circuits.keys())
+        else:
+            layer_indices = [idx for idx in layer_indices if idx in circuits]
+        
+        if not layer_indices:
+            print("No valid layers to visualize")
+            return {}
+        
+        # Use default names if not provided
+        if layer_names is None:
+            if hasattr(self, 'layer_names'):
+                layer_names = {idx: name for idx, name in enumerate(self.layer_names) 
+                            if idx in layer_indices}
+            else:
+                layer_names = {idx: f"Layer {idx}" for idx in layer_indices}
+        
+        # Define a function to convert tensor to base64 image for hover
+        def tensor_to_base64_img(tensor):
+            # Denormalize and convert to PIL image
+            img = tensor.cpu().permute(1, 2, 0).numpy()
+            img = (img - img.min()) / (img.max() - img.min() + 1e-8)
+            img = (img * 255).astype(np.uint8)
+            pil_img = Image.fromarray(img)
+            
+            # Convert to base64
+            buffered = BytesIO()
+            pil_img.save(buffered, format="JPEG", quality=70)
+            img_str = base64.b64encode(buffered.getvalue()).decode()
+            return f"data:image/jpeg;base64,{img_str}"
+        
+        # Get number of clusters for color mapping
+        unique_clusters = np.unique(cluster_labels)
+        
+        # Create color mapping
+        colors = [f'rgb({int(r*255)},{int(g*255)},{int(b*255)})' 
+                for r, g, b, _ in plt.cm.rainbow(np.linspace(0, 1, len(unique_clusters)))]
+        
+        # Process each layer and create figures
+        figures = {}
+        
+        for layer_idx in layer_indices:
+            # Get layer attributions
+            layer_circuits = circuits[layer_idx]
+            
+            # Reshape for UMAP
+            flat_circuits = layer_circuits.reshape(layer_circuits.shape[0], -1).numpy()
+            
+            # Standardize data
+            scaler = StandardScaler()
+            scaled_data = scaler.fit_transform(flat_circuits)
+            
+            # Apply UMAP dimensionality reduction
+            reducer = umap.UMAP(
+                n_components=2,
+                min_dist=0.1,
+                n_neighbors=min(15, len(flat_circuits)-1),
+                random_state=42
+            )
+            
+            # Compute embedding
+            embedding = reducer.fit_transform(scaled_data)
+            
+            # Create Plotly figure
+            fig = go.Figure()
+            
+            # Process each cluster
+            for j, cluster in enumerate(unique_clusters):
+                mask = cluster_labels == cluster
+                cluster_indices = np.where(mask)[0]
+                
+                # Pre-compute hover images
+                hover_images = [tensor_to_base64_img(samples[idx]) for idx in cluster_indices]
+                
+                # Add scatter trace for this cluster
+                fig.add_trace(go.Scatter(
+                    x=embedding[mask, 0],
+                    y=embedding[mask, 1],
+                    mode='markers',
+                    marker=dict(
+                        color=colors[j],
+                        size=12,
+                        opacity=0.7
+                    ),
+                    name=f'Cluster {j+1}',
+                    customdata=list(zip(cluster_indices, hover_images)),
+                    hovertemplate="""
+                    <b>Sample Index: %{customdata[0]}</b><br>
+                    <img src='%{customdata[1]}' width=150><br>
+                    <extra></extra>
+                    """
+                ))
+            
+            # Update layout
+            layer_name = layer_names.get(layer_idx, f"Layer {layer_idx}")
+            fig.update_layout(
+                title=f"{layer_name} Attributions for Prototype {prototype_idx}",
+                xaxis_title="UMAP Dimension 1",
+                yaxis_title="UMAP Dimension 2",
+                legend_title="Clusters",
+                height=600,
+                width=800
+            )
+            
+            figures[layer_idx] = fig
+        
+        return figures 
+
     def _determine_optimal_clusters(self, circuits, max_clusters=5, random_state=42):
         """
         Determine the optimal number of clusters for prototype disentanglement.

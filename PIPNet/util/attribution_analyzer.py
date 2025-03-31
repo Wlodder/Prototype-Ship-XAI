@@ -1,5 +1,6 @@
 from torch import nn
 import torch
+import matplotlib.pyplot as plt
 import numpy as np
 
 class MultiLayerAttributionAnalyzer:
@@ -153,8 +154,8 @@ class MultiLayerAttributionAnalyzer:
             ))
         
         # Forward pass through the model
-        with torch.no_grad():
-            _, pooled, _ = self.model(x, inference=False)
+        # with torch.no_grad():
+        _, pooled, _ = self.model(x, inference=False)
         
         # Get the prototype activation
         target_activation = pooled[0, prototype_idx]
@@ -601,7 +602,1045 @@ class MultiLayerAttributionAnalyzer:
             plt.tight_layout()
             plt.subplots_adjust(top=0.92)
             plt.show()
-    
+
+    def visualize_multi_layer_umap_with_gallery(self, circuits, cluster_labels, prototype_idx, 
+                                            samples, layer_indices=None, layer_names=None,
+                                            max_display_images=12):
+        """
+        Create interactive UMAP visualizations with synchronized image gallery display.
+        When points are selected in the scatter plot, corresponding images appear in the gallery.
+        
+        Args:
+            circuits: Dictionary of circuit attributions
+            cluster_labels: Cluster assignment for each sample
+            prototype_idx: Index of the prototype being analyzed
+            samples: Original input samples for generating previews
+            layer_indices: Specific layer indices to visualize (defaults to all)
+            layer_names: Optional dictionary of {layer_idx: display_name} for labels
+            max_display_images: Maximum number of images to display in the gallery
+            
+        Returns:
+            Dictionary of HTML files with interactive visualizations
+        """
+        import plotly.graph_objects as go
+        from plotly.subplots import make_subplots
+        import umap
+        from sklearn.preprocessing import StandardScaler
+        import numpy as np
+        import base64
+        from io import BytesIO
+        from PIL import Image
+        import os
+        import math
+        
+        # Determine which layers to visualize
+        if layer_indices is None:
+            layer_indices = sorted(circuits.keys())
+        else:
+            layer_indices = [idx for idx in layer_indices if idx in circuits]
+        
+        if not layer_indices:
+            print("No valid layers to visualize")
+            return {}
+        
+        # Use default names if not provided
+        if layer_names is None:
+            if hasattr(self, 'layer_names'):
+                layer_names = {idx: name for idx, name in enumerate(self.layer_names) 
+                            if idx in layer_indices}
+            else:
+                layer_names = {idx: f"Layer {idx}" for idx in layer_indices}
+        
+        # Define a function to convert tensor to base64 image for embedding
+        def tensor_to_base64_img(tensor, size=150):
+            # Denormalize and convert to PIL image
+            img = tensor.cpu().permute(1, 2, 0).numpy()
+            img = (img - img.min()) / (img.max() - img.min() + 1e-8)
+            img = (img * 255).astype(np.uint8)
+            pil_img = Image.fromarray(img)
+            
+            # Resize if needed
+            if size:
+                pil_img = pil_img.resize((size, size), Image.LANCZOS)
+            
+            # Convert to base64
+            buffered = BytesIO()
+            pil_img.save(buffered, format="JPEG", quality=80)
+            img_str = base64.b64encode(buffered.getvalue()).decode()
+            return f"data:image/jpeg;base64,{img_str}"
+        
+        # Get number of clusters for color mapping
+        unique_clusters = np.unique(cluster_labels)
+        
+        # Create color mapping
+        colors = [f'rgb({int(r*255)},{int(g*255)},{int(b*255)})' 
+                for r, g, b, _ in plt.cm.rainbow(np.linspace(0, 1, len(unique_clusters)))]
+        
+        results = {}
+        
+        # For each layer, create a complete dashboard
+        for layer_idx in layer_indices:
+            # Get layer attributions
+            layer_circuits = circuits[layer_idx]
+            
+            # Reshape for UMAP
+            flat_circuits = layer_circuits.reshape(layer_circuits.shape[0], -1).numpy()
+            
+            # Standardize data
+            scaler = StandardScaler()
+            scaled_data = scaler.fit_transform(flat_circuits)
+            
+            # Apply UMAP dimensionality reduction
+            reducer = umap.UMAP(
+                n_components=2,
+                min_dist=0.1,
+                n_neighbors=min(15, len(flat_circuits)-1),
+                random_state=42
+            )
+            
+            # Compute embedding
+            embedding = reducer.fit_transform(scaled_data)
+            
+            # Create a UMAP scatter plot figure
+            fig_scatter = go.Figure()
+            
+            # Process each cluster
+            sample_indices_by_cluster = {}
+            images_by_cluster = {}
+            
+            for j, cluster in enumerate(unique_clusters):
+                mask = cluster_labels == cluster
+                cluster_indices = np.where(mask)[0]
+                sample_indices_by_cluster[j] = cluster_indices.tolist()
+                
+                # Store images for this cluster (for gallery display)
+                images_by_cluster[j] = [tensor_to_base64_img(samples[idx]) for idx in cluster_indices]
+                
+                # Add scatter trace
+                fig_scatter.add_trace(go.Scatter(
+                    x=embedding[mask, 0],
+                    y=embedding[mask, 1],
+                    mode='markers',
+                    marker=dict(
+                        color=colors[j],
+                        size=10,
+                        opacity=0.8
+                    ),
+                    name=f'Cluster {j+1}',
+                    customdata=list(zip(cluster_indices, [j] * len(cluster_indices))),
+                    hovertemplate="Sample: %{customdata[0]}<br>Cluster: %{customdata[1] + 1}<extra></extra>"
+                ))
+            
+            # Update layout
+            layer_name = layer_names.get(layer_idx, f"Layer {layer_idx}")
+            fig_scatter.update_layout(
+                title=f"{layer_name} Attributions for Prototype {prototype_idx}",
+                xaxis_title="UMAP Dimension 1",
+                yaxis_title="UMAP Dimension 2",
+                legend_title="Clusters",
+                height=500,
+                width=800,
+                hovermode='closest',
+                clickmode='event+select'
+            )
+            
+            # Generate HTML for the dashboard with embedded JavaScript for interactivity
+            html = f"""
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <title>Interactive UMAP Visualization - Layer {layer_idx}</title>
+                <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+                <style>
+                    body {{ font-family: Arial, sans-serif; margin: 20px; }}
+                    .container {{ display: flex; flex-direction: column; }}
+                    .plot-container {{ width: 800px; }}
+                    .gallery-container {{ 
+                        margin-top: 20px;
+                        display: flex;
+                        flex-wrap: wrap;
+                        gap: 10px;
+                    }}
+                    .cluster-selector {{
+                        margin: 20px 0;
+                        display: flex;
+                        gap: 10px;
+                    }}
+                    .cluster-btn {{
+                        padding: 8px 15px;
+                        cursor: pointer;
+                        border: none;
+                        border-radius: 4px;
+                    }}
+                    .gallery-image {{
+                        width: 150px;
+                        height: 150px;
+                        object-fit: cover;
+                        border-radius: 4px;
+                        transition: transform 0.2s;
+                    }}
+                    .gallery-image:hover {{
+                        transform: scale(1.05);
+                        box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+                    }}
+                    .image-container {{
+                        position: relative;
+                        display: inline-block;
+                    }}
+                    .image-label {{
+                        position: absolute;
+                        bottom: 0;
+                        left: 0;
+                        background: rgba(0,0,0,0.7);
+                        color: white;
+                        padding: 2px 6px;
+                        font-size: 12px;
+                        border-radius: 0 0 4px 4px;
+                    }}
+                    h2 {{ margin-bottom: 10px; }}
+                </style>
+            </head>
+            <body>
+                <h1>Interactive Visualization for Prototype {prototype_idx} - {layer_name}</h1>
+                <div class="container">
+                    <div class="plot-container" id="scatter-plot"></div>
+                    
+                    <div class="cluster-selector">
+                        <span><strong>Show cluster: </strong></span>
+            """
+            
+            # Add cluster selector buttons
+            for j, cluster in enumerate(unique_clusters):
+                html += f"""
+                <button class="cluster-btn" 
+                        style="background-color: {colors[j]}; color: white;" 
+                        onclick="showClusterImages({j})">
+                    Cluster {j+1} ({len(sample_indices_by_cluster[j])} samples)
+                </button>
+                """
+            
+            html += """
+                    </div>
+                    
+                    <h2>Image Gallery</h2>
+                    <div id="gallery-info">Select points in the plot or click a cluster button to view images.</div>
+                    <div class="gallery-container" id="image-gallery"></div>
+                </div>
+                
+                <script>
+                    // Store all image data
+                    const clusterData = {
+            """
+            
+            # Embed image data as JavaScript variables
+            for j in range(len(unique_clusters)):
+                html += f"""
+                        {j}: {{
+                            indices: {sample_indices_by_cluster[j]},
+                            images: {images_by_cluster[j]},
+                            color: "{colors[j]}"
+                        }},
+                """
+            
+            html += """
+                    };
+                    
+                    // Create the scatter plot
+                    const scatterData = 
+            """
+            
+            # Embed the Plotly figure data
+            html += fig_scatter.to_json()
+            
+            html += """
+                    ;
+                    
+                    Plotly.newPlot('scatter-plot', scatterData.data, scatterData.layout);
+                    
+                    // Function to display images for a specific cluster
+                    function showClusterImages(clusterIdx) {
+                        const gallery = document.getElementById('image-gallery');
+                        const info = document.getElementById('gallery-info');
+                        const cluster = clusterData[clusterIdx];
+                        
+                        // Update info text
+                        info.innerHTML = `Showing ${Math.min(cluster.images.length, 12)} of ${cluster.images.length} images from Cluster ${clusterIdx + 1}`;
+                        
+                        // Clear gallery
+                        gallery.innerHTML = '';
+                        
+                        // Add images (limit to max_display_images)
+                        const maxImages = Math.min(cluster.images.length, 12);
+                        for (let i = 0; i < maxImages; i++) {
+                            const div = document.createElement('div');
+                            div.className = 'image-container';
+                            
+                            const img = document.createElement('img');
+                            img.src = cluster.images[i];
+                            img.className = 'gallery-image';
+                            img.style.border = `3px solid ${cluster.color}`;
+                            
+                            const label = document.createElement('div');
+                            label.className = 'image-label';
+                            label.textContent = `Sample ${cluster.indices[i]}`;
+                            
+                            div.appendChild(img);
+                            div.appendChild(label);
+                            gallery.appendChild(div);
+                        }
+                    }
+                    
+                    // Handle selection events from the plot
+                    document.getElementById('scatter-plot').on('plotly_selected', function(eventData) {
+                        if (!eventData || !eventData.points || eventData.points.length === 0) {
+                            return;
+                        }
+                        
+                        const gallery = document.getElementById('image-gallery');
+                        const info = document.getElementById('gallery-info');
+                        
+                        // Clear gallery
+                        gallery.innerHTML = '';
+                        
+                        // Collect selected points
+                        const selectedIndices = eventData.points.map(pt => pt.customdata[0]);
+                        const numToShow = Math.min(selectedIndices.length, 12);
+                        
+                        // Update info text
+                        info.innerHTML = `Showing ${numToShow} of ${selectedIndices.length} selected samples`;
+                        
+                        // Display images for selected points
+                        for (let i = 0; i < numToShow; i++) {
+                            const sampleIdx = selectedIndices[i];
+                            let clusterIdx, imageIdx;
+                            
+                            // Find which cluster this sample belongs to
+                            for (const [cIdx, cluster] of Object.entries(clusterData)) {
+                                const localIdx = cluster.indices.indexOf(sampleIdx);
+                                if (localIdx !== -1) {
+                                    clusterIdx = parseInt(cIdx);
+                                    imageIdx = localIdx;
+                                    break;
+                                }
+                            }
+                            
+                            if (clusterIdx === undefined) continue;
+                            
+                            const div = document.createElement('div');
+                            div.className = 'image-container';
+                            
+                            const img = document.createElement('img');
+                            img.src = clusterData[clusterIdx].images[imageIdx];
+                            img.className = 'gallery-image';
+                            img.style.border = `3px solid ${clusterData[clusterIdx].color}`;
+                            
+                            const label = document.createElement('div');
+                            label.className = 'image-label';
+                            label.textContent = `Sample ${sampleIdx}`;
+                            
+                            div.appendChild(img);
+                            div.appendChild(label);
+                            gallery.appendChild(div);
+                        }
+                    });
+                    
+                    // Show the first cluster by default
+                    showClusterImages(0);
+                </script>
+            </body>
+            </html>
+            """
+            
+            # Store the HTML for this layer
+            results[layer_idx] = html
+        
+        # Save HTML files to disk
+        output_dir = f"prototype_{prototype_idx}_visualizations"
+        os.makedirs(output_dir, exist_ok=True)
+        
+        for layer_idx, html_content in results.items():
+            layer_name = layer_names.get(layer_idx, f"layer_{layer_idx}")
+            file_path = os.path.join(output_dir, f"{layer_name}_visualization.html")
+            
+            with open(file_path, "w") as f:
+                f.write(html_content)
+            
+            print(f"Saved visualization for layer {layer_idx} to {file_path}")
+        
+        return results
+
+
+    def visualize_top_activating_patches(self, prototype_idx, cluster_labels, samples, 
+                                    activations, proto_features=None, n_patches=6,
+                                    save_dir=None):
+        """
+        Visualize the top activating patches for each cluster of a prototype.
+        
+        Args:
+            prototype_idx: Index of the prototype to visualize
+            cluster_labels: Cluster assignments for samples
+            samples: Tensor of input samples that activate the prototype
+            activations: Activation values for each sample
+            proto_features: Optional prototype feature maps to locate activating regions
+            n_patches: Number of top patches to show per cluster
+            save_dir: Directory to save visualizations (if None, just display)
+            
+        Returns:
+            List of matplotlib figures, one per cluster
+        """
+        import matplotlib.pyplot as plt
+        import torch
+        import numpy as np
+        import os
+        from matplotlib.patches import Rectangle
+        
+        # Get unique clusters
+        unique_clusters = np.unique(cluster_labels)
+        n_clusters = len(unique_clusters)
+        
+        # List to store figures
+        figures = []
+        
+        # For each cluster
+        for cluster_idx, cluster in enumerate(unique_clusters):
+            # Find samples in this cluster
+            cluster_mask = cluster_labels == cluster
+            cluster_indices = np.where(cluster_mask)[0]
+            cluster_activations = [activations[i] for i in cluster_indices]
+            
+            # Sort by activation strength (descending)
+            sorted_indices = np.argsort(cluster_activations)[::-1]
+            top_indices = [cluster_indices[i] for i in sorted_indices[:n_patches]]
+            top_activations = [cluster_activations[i] for i in sorted_indices[:n_patches]]
+            
+            # Skip if no samples
+            if not top_indices:
+                continue
+                
+            # Create figure - showing pairs of (original image, activation patch)
+            n_cols = 2  # original + patch
+            n_rows = min(n_patches, len(top_indices))
+            fig, axes = plt.subplots(n_rows, n_cols, figsize=(n_cols * 4, n_rows * 3))
+            
+            # Make axes 2D if only one row
+            if n_rows == 1:
+                axes = axes.reshape(1, -1)
+            
+            # Process top samples
+            for i, (idx, activation) in enumerate(zip(top_indices, top_activations)):
+                if i >= n_rows:
+                    break
+                    
+                # Get the sample
+                sample = samples[idx]
+                
+                # Show original image
+                img = sample.cpu().permute(1, 2, 0).numpy()
+                img = (img - img.min()) / (img.max() - img.min() + 1e-8)
+                axes[i, 0].imshow(img)
+                axes[i, 0].set_title(f"Sample {idx}\nActivation: {activation:.3f}")
+                axes[i, 0].axis('off')
+                
+                # Find activation region if proto_features provided
+                if proto_features is not None:
+                    # Get prototype activation map for this sample
+                    activation_map = proto_features[idx, prototype_idx]
+                    
+                    # Find coordinates of maximum activation
+                    if len(activation_map.shape) == 2:  # Spatial map
+                        h_idx, w_idx = np.unravel_index(
+                            torch.argmax(activation_map).cpu(), 
+                            activation_map.shape
+                        )
+                        
+                        # Calculate receptive field in input image
+                        # This is approximate and depends on model architecture
+                        input_size = sample.shape[1]  # Assuming square input
+                        feature_size = activation_map.shape[0]
+                        scale = input_size / feature_size
+                        
+                        # Calculate patch size (relative to activation map)
+                        patch_size = max(1, min(feature_size // 4, 3))
+                        
+                        # Calculate patch boundaries in input space
+                        h_min = max(0, int((h_idx - patch_size/2) * scale))
+                        h_max = min(input_size, int((h_idx + patch_size/2) * scale))
+                        w_min = max(0, int((w_idx - patch_size/2) * scale))
+                        w_max = min(input_size, int((w_idx + patch_size/2) * scale))
+                        
+                        # Draw rectangle on original image
+                        rect = Rectangle((w_min, h_min), w_max-w_min, h_max-h_min,
+                                    linewidth=2, edgecolor='r', facecolor='none')
+                        axes[i, 0].add_patch(rect)
+                        
+                        # Extract and display the patch
+                        patch = sample[:, h_min:h_max, w_min:w_max].cpu()
+                        patch = patch.permute(1, 2, 0).numpy()
+                        patch = (patch - patch.min()) / (patch.max() - patch.min() + 1e-8)
+                        axes[i, 1].imshow(patch)
+                        axes[i, 1].set_title("Activation Patch")
+                        axes[i, 1].axis('off')
+                    else:
+                        # If not spatial, just show the full image again
+                        axes[i, 1].imshow(img)
+                        axes[i, 1].set_title("No spatial information")
+                        axes[i, 1].axis('off')
+                else:
+                    # Without proto_features, use a simple center crop
+                    h, w = img.shape[:2]
+                    crop_size = min(h, w) // 3
+                    h_mid, w_mid = h // 2, w // 2
+                    h_min, h_max = max(0, h_mid - crop_size//2), min(h, h_mid + crop_size//2)
+                    w_min, w_max = max(0, w_mid - crop_size//2), min(w, w_mid + crop_size//2)
+                    
+                    # Draw rectangle on original
+                    rect = Rectangle((w_min, h_min), w_max-w_min, h_max-h_min,
+                                linewidth=2, edgecolor='r', facecolor='none')
+                    axes[i, 0].add_patch(rect)
+                    
+                    # Show cropped patch
+                    patch = img[h_min:h_max, w_min:w_max]
+                    axes[i, 1].imshow(patch)
+                    axes[i, 1].set_title("Center Crop (approximate)")
+                    axes[i, 1].axis('off')
+            
+            plt.suptitle(f"Prototype {prototype_idx} - Cluster {cluster_idx+1} Top Activating Patches", fontsize=16)
+            plt.tight_layout()
+            
+            # Save or display
+            if save_dir:
+                os.makedirs(save_dir, exist_ok=True)
+                plt.savefig(os.path.join(save_dir, f"prototype_{prototype_idx}_cluster_{cluster_idx+1}_patches.png"), 
+                        dpi=150, bbox_inches='tight')
+                plt.close()
+            else:
+                figures.append(fig)
+                plt.show()
+        
+        return figures
+
+    def visualize_all_prototypes_patches(self, pure_results, dataloader, 
+                                        save_dir=None, n_patches=4):
+        """
+        Visualize highly activating patches for all prototypes that have been analyzed with PURE.
+        
+        Args:
+            pure_results: Dictionary of results from analyzing prototypes with PURE
+            dataloader: DataLoader to get additional samples if needed
+            save_dir: Directory to save visualizations
+            n_patches: Number of patches to show per cluster
+            
+        Returns:
+            Dictionary mapping prototype indices to visualization figures
+        """
+        import os
+        from tqdm import tqdm
+        
+        # Create save directory if needed
+        if save_dir:
+            os.makedirs(save_dir, exist_ok=True)
+            
+        # Process each prototype in the results
+        all_visualizations = {}
+        
+        for proto_idx, result in tqdm(pure_results.items(), desc="Visualizing prototypes"):
+            # Extract needed data
+            samples = result['top_samples']
+            cluster_labels = result['cluster_labels']
+            activations = result['top_activations']
+            
+            # Get prototype feature maps if available
+            proto_features = None
+            if 'proto_features' in result:
+                proto_features = result['proto_features']
+            
+            # Create subdirectory for this prototype
+            proto_save_dir = None
+            if save_dir:
+                proto_save_dir = os.path.join(save_dir, f"prototype_{proto_idx}")
+                os.makedirs(proto_save_dir, exist_ok=True)
+            
+            # Visualize patches
+            figures = self.visualize_top_activating_patches(
+                proto_idx, 
+                cluster_labels, 
+                samples, 
+                activations, 
+                proto_features,
+                n_patches=n_patches,
+                save_dir=proto_save_dir
+            )
+            
+            all_visualizations[proto_idx] = figures
+            
+        return all_visualizations
+
+    def extract_activation_patches(self, prototype_idx, sample_tensor, 
+                                proto_features=None, patch_size=64):
+        """
+        Extract the actual patch that maximally activates a given prototype.
+        
+        Args:
+            prototype_idx: Index of the prototype
+            sample_tensor: Input sample tensor
+            proto_features: Prototype feature map (if available)
+            patch_size: Size of the patch to extract (in pixels)
+            
+        Returns:
+            Tuple of (patch tensor, (x, y, width, height))
+        """
+        import torch
+        import numpy as np
+        
+        # Get sample dimensions
+        _, h, w = sample_tensor.shape
+        
+        # If we have prototype features, use them to find activation region
+        if proto_features is not None:
+            # Get activation map
+            activation_map = proto_features[0, prototype_idx]
+            
+            # Find coordinates of maximum activation
+            if len(activation_map.shape) == 2:  # Spatial map
+                max_h, max_w = np.unravel_index(
+                    torch.argmax(activation_map).cpu(), 
+                    activation_map.shape
+                )
+                
+                # Convert to input image coordinates
+                feature_size = activation_map.shape[0]
+                scale = h / feature_size  # Assuming square input
+                
+                # Center of activation
+                center_h = int(max_h * scale)
+                center_w = int(max_w * scale)
+            else:
+                # If not spatial, use center of image
+                center_h, center_w = h // 2, w // 2
+        else:
+            # Without features, use center of image
+            center_h, center_w = h // 2, w // 2
+        
+        # Calculate patch boundaries
+        half_size = patch_size // 2
+        h_min = max(0, center_h - half_size)
+        h_max = min(h, center_h + half_size)
+        w_min = max(0, center_w - half_size)
+        w_max = min(w, center_w + half_size)
+        
+        # Extract patch
+        patch = sample_tensor[:, h_min:h_max, w_min:w_max]
+        
+        # Return patch and coordinates
+        return patch, (w_min, h_min, w_max - w_min, h_max - h_min)
+
+    def create_activation_patch_visualization(self, pure_results, prototype_indices=None):
+        """
+        Create an HTML visualization showing highly activating patches for prototypes.
+        
+        Args:
+            pure_results: Dictionary of results from analyzing prototypes
+            prototype_indices: Specific prototypes to include (None for all)
+            
+        Returns:
+            Path to the saved HTML file
+        """
+        import json
+        import base64
+        from io import BytesIO
+        from PIL import Image
+        import torch
+        import os
+        import numpy as np
+        
+        # Helper function for tensor to base64 image conversion
+        def tensor_to_base64(tensor):
+            try:
+                img = tensor.cpu().permute(1, 2, 0).numpy()
+                img = (img - img.min()) / (img.max() - img.min() + 1e-8)
+                img = (img * 255).astype('uint8')
+                pil_img = Image.fromarray(img)
+                
+                buffered = BytesIO()
+                pil_img.save(buffered, format="JPEG", quality=80)
+                img_str = base64.b64encode(buffered.getvalue()).decode()
+                return img_str
+            except Exception as e:
+                print(f"Error converting image: {e}")
+                return ""
+        
+        # Function to find highly activating patch in an image
+        def find_activation_patch(sample, proto_idx):
+            """
+            Find the patch that maximally activates the prototype.
+            Returns the patch tensor and its coordinates.
+            """
+            sample_batch = sample.unsqueeze(0).to(self.device)
+            
+            # Get feature representations
+            with torch.no_grad():
+                proto_features, pooled, _ = self.model(sample_batch, inference=True)
+                
+            # Get activation map for this prototype
+            if proto_features.ndim == 4:  # Spatial maps (B, C, H, W)
+                activation_map = proto_features[0, proto_idx]
+                
+                # Find coordinates of maximum activation
+                max_val = torch.max(activation_map)
+                max_pos = torch.where(activation_map == max_val)
+                
+                # Handle case where there might be multiple equal maxima
+                if len(max_pos[0]) > 0:
+                    max_h, max_w = max_pos[0][0].item(), max_pos[1][0].item()
+                    
+                    # Map to image coordinates
+                    img_h, img_w = sample.shape[1:]
+                    feat_h, feat_w = activation_map.shape
+                    
+                    # Calculate scale factors
+                    scale_h, scale_w = img_h / feat_h, img_w / feat_w
+                    
+                    # Calculate patch size (adjust as needed)
+                    patch_size = min(img_h, img_w) // 4  # Use 1/4 of image size
+                    
+                    # Calculate patch center in image coordinates
+                    center_h = int(max_h * scale_h)
+                    center_w = int(max_w * scale_w)
+                    
+                    # Calculate patch boundaries
+                    h_min = max(0, center_h - patch_size // 2)
+                    h_max = min(img_h, center_h + patch_size // 2)
+                    w_min = max(0, center_w - patch_size // 2)
+                    w_max = min(img_w, center_w + patch_size // 2)
+                    
+                    # Extract patch
+                    patch = sample[:, h_min:h_max, w_min:w_max]
+                    
+                    # Return patch and coordinates
+                    return patch, (w_min, h_min, w_max - w_min, h_max - h_min), float(max_val.cpu())
+            
+            # Fallback to center crop if spatial information not available
+            img_h, img_w = sample.shape[1:]
+            patch_size = min(img_h, img_w) // 3
+            center_h, center_w = img_h // 2, img_w // 2
+            h_min = max(0, center_h - patch_size // 2)
+            h_max = min(img_h, center_h + patch_size // 2)
+            w_min = max(0, center_w - patch_size // 2)
+            w_max = min(img_w, center_w + patch_size // 2)
+            
+            patch = sample[:, h_min:h_max, w_min:w_max]
+            return patch, (w_min, h_min, w_max - w_min, h_max - h_min), float(pooled[0, proto_idx].cpu())
+        
+        # Select prototypes
+        if prototype_indices is None:
+            prototype_indices = list(pure_results.keys())
+            
+        # Create simplified data structure
+        output_data = {}
+        print("Processing prototype data...")
+        
+        for proto_idx in prototype_indices:
+            if proto_idx not in pure_results:
+                continue
+            
+            result = pure_results[proto_idx]
+            samples = result['top_samples'] 
+            cluster_labels = result['cluster_labels']
+            activations = result['top_activations']
+            
+            proto_data = {"clusters": {}}
+            unique_clusters = np.unique(cluster_labels)
+            
+            for cluster_id in unique_clusters:
+                mask = cluster_labels == cluster_id
+                indices = np.where(mask)[0]
+                
+                if len(indices) == 0:
+                    continue
+                    
+                # Take top 8 samples by activation
+                cluster_acts = [activations[i] for i in indices]
+                sorted_idx = np.argsort(cluster_acts)[::-1]
+                top_indices = [indices[i] for i in sorted_idx[:8]]
+                
+                cluster_samples = []
+                for idx in top_indices:
+                    # Get images
+                    sample = samples[idx]
+                    full_image = tensor_to_base64(sample)
+                    
+                    # Find highly activating patch
+                    patch, coords, act_val = find_activation_patch(sample, proto_idx)
+                    patch_image = tensor_to_base64(patch)
+                    
+                    sample_data = {
+                        "id": int(idx),
+                        "activation": float(activations[idx]),
+                        "act_value": float(act_val),
+                        "image": full_image,
+                        "patch": patch_image,
+                        "coords": coords
+                    }
+                    cluster_samples.append(sample_data)
+                
+                proto_data["clusters"][int(cluster_id)] = cluster_samples
+            
+            output_data[int(proto_idx)] = proto_data
+        
+        # Save data to separate JS file
+        js_file = "prototype_data.js"
+        with open(js_file, "w") as f:
+            f.write(f"const prototypeData = {json.dumps(output_data)};")
+        
+        # Create HTML file with external data reference
+        html_file = "prototype_visualization.html"
+        html = """
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Prototype Activation Patches</title>
+        <script src="prototype_data.js"></script>
+        <style>
+            body { font-family: Arial, sans-serif; margin: 20px; }
+            .controls { margin: 20px 0; }
+            select, button { padding: 8px 12px; margin-right: 10px; }
+            .cluster-btn { 
+                margin-right: 5px; 
+                border: none; 
+                border-radius: 4px; 
+                padding: 8px 15px; 
+                cursor: pointer; 
+                font-weight: bold;
+            }
+            .active-cluster { box-shadow: 0 0 0 3px rgba(0,0,0,0.3); }
+            .gallery { 
+                display: grid; 
+                grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); 
+                gap: 20px; 
+                margin-top: 20px;
+            }
+            .card { 
+                border: 1px solid #ddd; 
+                border-radius: 8px; 
+                overflow: hidden; 
+                box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+                transition: transform 0.2s;
+            }
+            .card:hover { 
+                transform: translateY(-5px);
+                box-shadow: 0 5px 15px rgba(0,0,0,0.2);
+            }
+            .card-header { 
+                padding: 10px 15px; 
+                background: #f5f5f5; 
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                border-bottom: 1px solid #ddd;
+            }
+            .card-body { padding: 15px; }
+            img { 
+                width: 100%; 
+                border-radius: 4px; 
+                display: block;
+            }
+            .patch-img { 
+                border: 3px solid red; 
+                margin-bottom: 12px;
+            }
+            .section { margin-bottom: 15px; }
+            h2, h3, h4 { margin-top: 0; color: #333; }
+            .proto-info {
+                background: #f0f4f8;
+                padding: 10px 15px;
+                border-radius: 6px;
+                margin: 10px 0 20px 0;
+            }
+            .activation-value {
+                font-weight: bold;
+                color: #d04040;
+            }
+        </style>
+    </head>
+    <body>
+        <h1>Prototype Activation Patches</h1>
+        
+        <div class="proto-info" id="proto-info">
+            Select a prototype to begin exploring activation patches
+        </div>
+        
+        <div class="controls">
+            <label for="prototype-select">Select Prototype:</label>
+            <select id="prototype-select">
+                <option value="">-- Select Prototype --</option>
+            </select>
+            
+            <div id="cluster-buttons" style="display: inline-block; margin-left: 20px;"></div>
+        </div>
+        
+        <div id="gallery" class="gallery"></div>
+        
+        <script>
+            // Initialize UI
+            const protoSelect = document.getElementById('prototype-select');
+            const clusterButtons = document.getElementById('cluster-buttons');
+            const gallery = document.getElementById('gallery');
+            const protoInfo = document.getElementById('proto-info');
+            
+            let currentCluster = null;
+            
+            // Populate prototype dropdown
+            for (const protoId in prototypeData) {
+                const option = document.createElement('option');
+                option.value = protoId;
+                option.textContent = `Prototype ${protoId}`;
+                protoSelect.appendChild(option);
+            }
+            
+            // Handle prototype selection
+            protoSelect.addEventListener('change', function() {
+                const protoId = this.value;
+                if (!protoId) {
+                    clusterButtons.innerHTML = '';
+                    gallery.innerHTML = '';
+                    protoInfo.textContent = 'Select a prototype to begin exploring activation patches';
+                    return;
+                }
+                
+                showPrototype(protoId);
+            });
+            
+            function showPrototype(protoId) {
+                const protoData = prototypeData[protoId];
+                currentCluster = null;
+                
+                // Create cluster buttons
+                clusterButtons.innerHTML = '';
+                const clusters = Object.keys(protoData.clusters);
+                
+                // Update prototype info
+                const totalClusters = clusters.length;
+                protoInfo.innerHTML = `<strong>Prototype ${protoId}</strong> - ${totalClusters} clusters detected`;
+                
+                clusters.forEach((clusterId, i) => {
+                    const clusterSamples = protoData.clusters[clusterId];
+                    const btn = document.createElement('button');
+                    btn.textContent = `Cluster ${parseInt(clusterId) + 1} (${clusterSamples.length})`;
+                    btn.className = 'cluster-btn';
+                    btn.dataset.clusterId = clusterId;
+                    btn.style.backgroundColor = getColor(i);
+                    btn.style.color = 'white';
+                    
+                    btn.onclick = () => {
+                        // Remove active class from all buttons
+                        document.querySelectorAll('.cluster-btn').forEach(b => 
+                            b.classList.remove('active-cluster'));
+                        
+                        // Add active class to this button
+                        btn.classList.add('active-cluster');
+                        
+                        // Show cluster
+                        showCluster(protoId, clusterId);
+                    };
+                    
+                    clusterButtons.appendChild(btn);
+                });
+                
+                // Show first cluster
+                if (clusters.length > 0) {
+                    const firstButton = document.querySelector('.cluster-btn');
+                    if (firstButton) {
+                        firstButton.classList.add('active-cluster');
+                        showCluster(protoId, clusters[0]);
+                    }
+                }
+            }
+            
+            function showCluster(protoId, clusterId) {
+                currentCluster = clusterId;
+                const samples = prototypeData[protoId].clusters[clusterId];
+                
+                // Update gallery
+                gallery.innerHTML = '';
+                
+                samples.forEach(sample => {
+                    const card = document.createElement('div');
+                    card.className = 'card';
+                    
+                    // Create header
+                    const header = document.createElement('div');
+                    header.className = 'card-header';
+                    header.innerHTML = `
+                        <div>Sample ${sample.id}</div>
+                        <div class="activation-value">Act: ${sample.activation.toFixed(3)}</div>
+                    `;
+                    
+                    // Create body
+                    const body = document.createElement('div');
+                    body.className = 'card-body';
+                    
+                    // Add patch image section
+                    const patchSection = document.createElement('div');
+                    patchSection.className = 'section';
+                    
+                    const patchLabel = document.createElement('h4');
+                    patchLabel.textContent = 'Activation Patch';
+                    
+                    const patchImg = document.createElement('img');
+                    patchImg.src = `data:image/jpeg;base64,${sample.patch}`;
+                    patchImg.className = 'patch-img';
+                    patchImg.alt = 'Activation Patch';
+                    
+                    patchSection.appendChild(patchLabel);
+                    patchSection.appendChild(patchImg);
+                    
+                    // Add full image section
+                    const fullSection = document.createElement('div');
+                    fullSection.className = 'section';
+                    
+                    const fullLabel = document.createElement('h4');
+                    fullLabel.textContent = 'Full Image';
+                    
+                    const fullImg = document.createElement('img');
+                    fullImg.src = `data:image/jpeg;base64,${sample.image}`;
+                    fullImg.alt = 'Full Image';
+                    
+                    fullSection.appendChild(fullLabel);
+                    fullSection.appendChild(fullImg);
+                    
+                    // Assemble card
+                    body.appendChild(patchSection);
+                    body.appendChild(fullSection);
+                    
+                    card.appendChild(header);
+                    card.appendChild(body);
+                    gallery.appendChild(card);
+                });
+            }
+            
+            function getColor(index) {
+                const colors = [
+                    '#4285F4', '#EA4335', '#FBBC05', '#34A853', 
+                    '#FF6D01', '#46BDC6', '#9C27B0', '#795548',
+                    '#5c6bc0', '#26a69a', '#ec407a', '#ab47bc',
+                    '#42a5f5', '#66bb6a', '#ffca28', '#8d6e63'
+                ];
+                return colors[index % colors.length];
+            }
+        </script>
+    </body>
+    </html>
+        """
+        
+        with open(html_file, "w") as f:
+            f.write(html)
+        
+        print(f"Visualization saved to {html_file}")
+        print(f"Data saved to {js_file}")
+        print("Open the HTML file in a browser to view the visualization")
+        
+        return html_file
+
     def analyze_prototype(self, dataloader, prototype_idx, layer_indices=None, 
                         n_clusters=None, adaptive=True, max_clusters=5,
                         clustering_method='kmeans', visualize=True,
@@ -711,7 +1750,8 @@ class MultiLayerAttributionAnalyzer:
         # Calculate silhouette score
         if len(np.unique(cluster_labels)) > 1:
             sil_score = silhouette_score(combined_circuits, cluster_labels)
-            is_polysemantic = sil_score > 0.1  # Threshold for polysemanticity
+            # is_polysemantic = sil_score > 0.1  # Threshold for polysemanticity
+            is_polysemantic = True
         else:
             sil_score = 0
             is_polysemantic = False
@@ -723,12 +1763,13 @@ class MultiLayerAttributionAnalyzer:
             print("Visualizing multi-layer analysis results...")
             
             # Visualize UMAP projections
-            self.visualize_multi_layer_umap(circuits, cluster_labels, prototype_idx)
+            # self.visualize_multi_layer_umap(circuits, cluster_labels, prototype_idx)
             
+            figures = self.visualize_multi_layer_umap_with_gallery(circuits, cluster_labels, prototype_idx, top_samples)
             # Visualize attributions
-            self.visualize_multi_layer_attributions(
-                circuits, cluster_labels, prototype_idx, top_samples
-            )
+            # self.visualize_multi_layer_attributions(
+            #     circuits, cluster_labels, prototype_idx, top_samples
+            # )
         
         # Return comprehensive results
         return {
