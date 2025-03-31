@@ -1,4 +1,5 @@
 from torch import nn
+from util.pure import PURE
 import torch
 import matplotlib.pyplot as plt
 import numpy as np
@@ -1674,8 +1675,7 @@ class MultiLayerAttributionAnalyzer:
         print(f"Analyzing prototype {prototype_idx} across layers: {layer_indices}")
         
         # Find top activating samples
-        from util.pure import PURE
-        pure_analyzer = PURE(self.model, device=self.device)
+        pure_analyzer = PURE(self.model, device=self.device, num_ref_samples=max_samples)
         top_samples, top_activations = pure_analyzer.find_top_activating_samples(
             dataloader, prototype_idx)        
         print(f"Found {len(top_samples)} top activating samples")
@@ -1784,3 +1784,236 @@ class MultiLayerAttributionAnalyzer:
             'top_samples': top_samples,
             'top_activations': top_activations
         }
+
+
+    def analyze_related_prototypes(self, dataloader, prototype_groups, layer_indices=[-1, -5, -10], 
+                             n_clusters=None, adaptive=True, max_clusters=5,
+                             clustering_method='hdbscan', visualize=True, max_samples=100):
+        """
+        Analyze potentially related prototypes by jointly clustering their circuits.
+        
+        Args:
+            dataloader: DataLoader containing dataset samples
+            prototype_groups: List where each item is either a single prototype index 
+                            or a list of related prototype indices
+            layer_indices: List of network layers to analyze
+            n_clusters: Fixed number of clusters (if None, determine adaptively)
+            adaptive: Whether to adaptively determine cluster count
+            max_clusters: Maximum clusters to consider if adaptive
+            clustering_method: Clustering algorithm to use
+            visualize: Whether to visualize results
+            
+        Returns:
+            Dictionary of analysis results
+        """
+        print(f"Analyzing {len(prototype_groups)} prototype groups")
+        
+        # Collect top activating samples for all prototypes
+        all_samples = []
+        all_activations = []
+        sample_prototype_map = []  # Track which prototype each sample belongs to
+        
+        for group_idx, proto_group in enumerate(prototype_groups):
+            # Handle both single prototype and lists of prototypes
+            proto_indices = [proto_group] if isinstance(proto_group, int) else proto_group
+            
+            for proto_idx in proto_indices:
+                print(f"Finding top activing samples for {proto_idx}")
+                # Find top activating samples
+                pure_analyzer = PURE(self.model, device=self.device, num_ref_samples=max_samples)
+                samples, activations = pure_analyzer.find_top_activating_samples(dataloader, proto_idx)
+                
+                # Store samples and track which prototype they belong to
+                all_samples.append(samples)
+                all_activations.extend(activations)
+                sample_prototype_map.extend([(group_idx, proto_idx)] * len(samples))
+        
+        # Combine all samples
+        if not all_samples:
+            return {"error": "No samples found for prototypes"}
+            
+        combined_samples = torch.cat(all_samples)
+        print(f"Collected {len(combined_samples)} samples from all prototypes")
+        
+        # Compute multi-layer attributions for all samples
+        combined_circuits = {}
+        
+        for i, sample in enumerate(combined_samples):
+            # Add batch dimension
+            sample_batch = sample.unsqueeze(0)
+            
+            # Get prototype from sample mapping
+            group_idx, proto_idx = sample_prototype_map[i]
+            
+            # Compute attributions
+            sample_attributions = self.compute_layer_attributions(
+                sample_batch, proto_idx, layer_indices
+            )
+            
+            # Add to circuits dictionary
+            for layer_idx, attribution in sample_attributions.items():
+                if layer_idx not in combined_circuits:
+                    combined_circuits[layer_idx] = []
+                
+                combined_circuits[layer_idx].append(attribution.detach().cpu())
+        
+        # Stack attributions for each layer
+        for layer_idx in combined_circuits:
+            combined_circuits[layer_idx] = torch.stack(combined_circuits[layer_idx])
+        
+        # Determine number of clusters if adaptive
+        if adaptive and n_clusters is None:
+            # Implement similar logic to determine_optimal_clusters
+            # For now, use a simple approach based on silhouette score
+            from sklearn.metrics import silhouette_score
+            
+            # Choose an informative layer
+            informative_layer = max(combined_circuits.keys())
+            layer_circuits = combined_circuits[informative_layer]
+            flat_circuits = layer_circuits.reshape(layer_circuits.shape[0], -1).numpy()
+            
+            best_score = -1
+            best_n_clusters = 2  # Default
+            
+            for k in range(2, min(max_clusters + 1, len(flat_circuits))):
+                # Skip if too few samples
+                if len(flat_circuits) <= k:
+                    continue
+                    
+                # Try clustering with k clusters
+                from sklearn.cluster import KMeans
+                kmeans = KMeans(n_clusters=k, random_state=42, n_init=10)
+                labels = kmeans.fit_predict(flat_circuits)
+                
+                # Calculate silhouette score
+                if len(np.unique(labels)) > 1:
+                    score = silhouette_score(flat_circuits, labels)
+                    if score > best_score:
+                        best_score = score
+                        best_n_clusters = k
+            
+            n_clusters = best_n_clusters
+            print(f"Determined optimal number of clusters: {n_clusters}")
+        
+        # Cluster the combined circuits
+        cluster_labels, centroids = self.cluster_multi_layer_circuits(
+            combined_circuits, n_clusters, method=clustering_method
+        )
+        
+        # Analyze how samples from each prototype map to clusters
+        prototype_cluster_map = {}
+        
+        for i, (group_idx, proto_idx) in enumerate(sample_prototype_map):
+            cluster = cluster_labels[i]
+            
+            if proto_idx not in prototype_cluster_map:
+                prototype_cluster_map[proto_idx] = {}
+            
+            if cluster not in prototype_cluster_map[proto_idx]:
+                prototype_cluster_map[proto_idx][cluster] = 0
+                
+            prototype_cluster_map[proto_idx][cluster] += 1
+        
+        # Summarize cluster distributions for each prototype
+        prototype_cluster_distributions = {}
+        for proto_idx, clusters in prototype_cluster_map.items():
+            total = sum(clusters.values())
+            distribution = {k: v/total for k, v in clusters.items()}
+            prototype_cluster_distributions[proto_idx] = distribution
+        
+        # Calculate similarity between prototypes based on cluster overlap
+        similarity_matrix = np.zeros((len(prototype_groups), len(prototype_groups)))
+        all_proto_indices = []
+        
+        for i, group1 in enumerate(prototype_groups):
+            proto_indices1 = [group1] if isinstance(group1, int) else group1
+            for proto1 in proto_indices1:
+                if proto1 not in prototype_cluster_distributions:
+                    continue
+                
+                for j, group2 in enumerate(prototype_groups):
+                    proto_indices2 = [group2] if isinstance(group2, int) else group2
+                    for proto2 in proto_indices2:
+                        if proto2 not in prototype_cluster_distributions:
+                            continue
+                        
+                        # Get distributions
+                        dist1 = prototype_cluster_distributions[proto1]
+                        dist2 = prototype_cluster_distributions[proto2]
+                        
+                        # Calculate Jensen-Shannon divergence
+                        from scipy.spatial.distance import jensenshannon
+                        
+                        # Prepare vectors for all possible clusters
+                        all_clusters = sorted(set(dist1.keys()).union(set(dist2.keys())))
+                        vec1 = [dist1.get(c, 0) for c in all_clusters]
+                        vec2 = [dist2.get(c, 0) for c in all_clusters]
+                        
+                        # Calculate JS divergence (0 = identical, 1 = completely different)
+                        js_div = jensenshannon(vec1, vec2)
+                        
+                        # Convert to similarity (1 = identical, 0 = completely different)
+                        similarity = 1 - js_div
+                        
+                        similarity_matrix[i, j] = max(similarity_matrix[i, j], similarity)
+        
+        # Visualize if requested
+        if visualize:
+            # Create cluster distribution visualization
+            import matplotlib.pyplot as plt
+            
+            # Create a figure showing cluster distributions for each prototype
+            plt.figure(figsize=(12, 8))
+            
+            # Get all unique prototypes
+            all_protos = sorted(prototype_cluster_distributions.keys())
+            
+            # Create a bar chart showing distribution
+            x = np.arange(len(all_protos))
+            bar_width = 0.8 / n_clusters
+            
+            for cluster in range(n_clusters):
+                heights = [prototype_cluster_distributions[p].get(cluster, 0) for p in all_protos]
+                plt.bar(x + cluster * bar_width, heights, width=bar_width, 
+                    label=f'Cluster {cluster+1}')
+            
+            plt.xlabel('Prototype Index')
+            plt.ylabel('Proportion of Samples')
+            plt.title('Cluster Distribution per Prototype')
+            plt.xticks(x + bar_width * n_clusters / 2, all_protos)
+            plt.legend()
+            plt.tight_layout()
+            plt.show()
+            
+            # Create similarity matrix visualization
+            plt.figure(figsize=(10, 8))
+            plt.imshow(similarity_matrix, cmap='viridis', vmin=0, vmax=1)
+            plt.colorbar(label='Similarity Score')
+            plt.title('Prototype Group Similarity Matrix')
+            
+            # Add text annotations
+            for i in range(len(prototype_groups)):
+                for j in range(len(prototype_groups)):
+                    text = f"{similarity_matrix[i, j]:.2f}"
+                    plt.text(j, i, text, ha='center', va='center', 
+                            color='white' if similarity_matrix[i, j] < 0.7 else 'black')
+            
+            plt.xticks(range(len(prototype_groups)), 
+                    [str(g) if isinstance(g, int) else str(g) for g in prototype_groups])
+            plt.yticks(range(len(prototype_groups)), 
+                    [str(g) if isinstance(g, int) else str(g) for g in prototype_groups])
+            plt.tight_layout()
+            plt.show()
+        
+        # Prepare results
+        results = {
+            "cluster_labels": cluster_labels,
+            "centroids": centroids,
+            "sample_prototype_map": sample_prototype_map,
+            "prototype_cluster_distributions": prototype_cluster_distributions,
+            "similarity_matrix": similarity_matrix,
+            "n_clusters": n_clusters,
+            "samples": combined_samples
+        }
+        
+        return results

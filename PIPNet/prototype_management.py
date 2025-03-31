@@ -520,16 +520,26 @@ class PrototypeManager:
         analyzer = MultiLayerAttributionAnalyzer(self.model, device=self.device)
         results = {}
 
-        for proto_idx in prototype_indices:
-            split_result = analyzer.analyze_prototype(
-                dataloader=dataloader,
-                prototype_idx=proto_idx,  # Choose any prototype to analyze
-                layer_indices=[-2, -3, -4],  # Analyze at different depths
-                adaptive=True,
-                clustering_method='hdbscan',
-                visualize=True,
-            )
-            results[proto_idx] = split_result
+        results = analyzer.analyze_related_prototypes(dataloader=dataloader,
+                                                      prototype_groups=prototype_indices,
+                                                      layer_indices=[-2,-3,-4,-5,-6,-7],
+                                                      adaptive=True,
+                                                      max_clusters=5,
+                                                      clustering_method='hdbscan',
+                                                      visualize=True,
+                                                      max_samples=100)
+
+        # for proto_idx in prototype_indices:
+        #     split_result = analyzer.analyze_prototype(
+        #         dataloader=dataloader,
+        #         prototype_idx=proto_idx,  # Choose any prototype to analyze
+        #         layer_indices=[-2, -3, -4, -5, -6, -7],  # Analyze at different depths
+        #         adaptive=True,
+        #         clustering_method='hdbscan',
+        #         visualize=True,
+        #         max_samples=200
+        #     )
+        #     results[proto_idx] = split_result
 
         html = analyzer.create_activation_patch_visualization(results, prototype_indices)
 
