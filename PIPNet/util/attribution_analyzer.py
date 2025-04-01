@@ -1302,7 +1302,8 @@ class MultiLayerAttributionAnalyzer:
                     scale_h, scale_w = img_h / feat_h, img_w / feat_w
                     
                     # Calculate patch size (adjust as needed)
-                    patch_size = min(img_h, img_w) // 4  # Use 1/4 of image size
+                    # patch_size = min(img_h, img_w) // 4  # Use 1/4 of image size
+                    patch_size = 32
                     
                     # Calculate patch center in image coordinates
                     center_h = int(max_h * scale_h)
@@ -1339,13 +1340,15 @@ class MultiLayerAttributionAnalyzer:
         # Create simplified data structure
         output_data = {}
         print("Processing prototype data...")
-        
+        print(prototype_indices, pure_results.keys())
         for proto_idx in prototype_indices:
             if proto_idx not in pure_results:
+                print(f"Can not find prototype group {proto_idx}")
                 continue
             
             result = pure_results[proto_idx]
-            samples = result['top_samples'] 
+            print(result.keys())
+            samples = result['samples'] 
             cluster_labels = result['cluster_labels']
             activations = result['top_activations']
             
@@ -1962,48 +1965,49 @@ class MultiLayerAttributionAnalyzer:
             # Create cluster distribution visualization
             import matplotlib.pyplot as plt
             
+            figures = self.visualize_multi_layer_umap_with_gallery(combined_circuits, cluster_labels, prototype_groups, combined_samples)
             # Create a figure showing cluster distributions for each prototype
-            plt.figure(figsize=(12, 8))
+            # plt.figure(figsize=(12, 8))
             
-            # Get all unique prototypes
-            all_protos = sorted(prototype_cluster_distributions.keys())
+            # # Get all unique prototypes
+            # all_protos = sorted(prototype_cluster_distributions.keys())
             
-            # Create a bar chart showing distribution
-            x = np.arange(len(all_protos))
-            bar_width = 0.8 / n_clusters
+            # # Create a bar chart showing distribution
+            # x = np.arange(len(all_protos))
+            # bar_width = 0.8 / n_clusters
             
-            for cluster in range(n_clusters):
-                heights = [prototype_cluster_distributions[p].get(cluster, 0) for p in all_protos]
-                plt.bar(x + cluster * bar_width, heights, width=bar_width, 
-                    label=f'Cluster {cluster+1}')
+            # for cluster in range(n_clusters):
+            #     heights = [prototype_cluster_distributions[p].get(cluster, 0) for p in all_protos]
+            #     plt.bar(x + cluster * bar_width, heights, width=bar_width, 
+            #         label=f'Cluster {cluster+1}')
             
-            plt.xlabel('Prototype Index')
-            plt.ylabel('Proportion of Samples')
-            plt.title('Cluster Distribution per Prototype')
-            plt.xticks(x + bar_width * n_clusters / 2, all_protos)
-            plt.legend()
-            plt.tight_layout()
-            plt.show()
+            # plt.xlabel('Prototype Index')
+            # plt.ylabel('Proportion of Samples')
+            # plt.title('Cluster Distribution per Prototype')
+            # plt.xticks(x + bar_width * n_clusters / 2, all_protos)
+            # plt.legend()
+            # plt.tight_layout()
+            # plt.show()
             
-            # Create similarity matrix visualization
-            plt.figure(figsize=(10, 8))
-            plt.imshow(similarity_matrix, cmap='viridis', vmin=0, vmax=1)
-            plt.colorbar(label='Similarity Score')
-            plt.title('Prototype Group Similarity Matrix')
+            # # Create similarity matrix visualization
+            # plt.figure(figsize=(10, 8))
+            # plt.imshow(similarity_matrix, cmap='viridis', vmin=0, vmax=1)
+            # plt.colorbar(label='Similarity Score')
+            # plt.title('Prototype Group Similarity Matrix')
             
-            # Add text annotations
-            for i in range(len(prototype_groups)):
-                for j in range(len(prototype_groups)):
-                    text = f"{similarity_matrix[i, j]:.2f}"
-                    plt.text(j, i, text, ha='center', va='center', 
-                            color='white' if similarity_matrix[i, j] < 0.7 else 'black')
+            # # Add text annotations
+            # for i in range(len(prototype_groups)):
+            #     for j in range(len(prototype_groups)):
+            #         text = f"{similarity_matrix[i, j]:.2f}"
+            #         plt.text(j, i, text, ha='center', va='center', 
+            #                 color='white' if similarity_matrix[i, j] < 0.7 else 'black')
             
-            plt.xticks(range(len(prototype_groups)), 
-                    [str(g) if isinstance(g, int) else str(g) for g in prototype_groups])
-            plt.yticks(range(len(prototype_groups)), 
-                    [str(g) if isinstance(g, int) else str(g) for g in prototype_groups])
-            plt.tight_layout()
-            plt.show()
+            # plt.xticks(range(len(prototype_groups)), 
+            #         [str(g) if isinstance(g, int) else str(g) for g in prototype_groups])
+            # plt.yticks(range(len(prototype_groups)), 
+            #         [str(g) if isinstance(g, int) else str(g) for g in prototype_groups])
+            # plt.tight_layout()
+            # plt.show()
         
         # Prepare results
         results = {
