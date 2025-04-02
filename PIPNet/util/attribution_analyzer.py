@@ -254,6 +254,9 @@ class MultiLayerAttributionAnalyzer:
         # If no weights provided, weight all layers equally
         if layer_weights is None:
             layer_weights = {layer_idx: 1.0 for layer_idx in circuits.keys()}
+        else:
+            layer_weights = layer_weights
+        print(layer_weights)
         
         # Normalize weights to sum to 1
         total_weight = sum(layer_weights.values())
@@ -317,10 +320,11 @@ class MultiLayerAttributionAnalyzer:
             
             # HDBSCAN for density-based clustering
             clusterer = hdbscan.HDBSCAN(
-                min_cluster_size=max(5, n_samples // 10),
+                min_cluster_size=max(6, n_samples // 10),
                 min_samples=5,
                 metric='euclidean',
-                prediction_data=True
+                prediction_data=True,
+                leaf_size=20
             )
             
             cluster_labels = clusterer.fit_predict(combined_features_np)
@@ -1272,12 +1276,21 @@ class MultiLayerAttributionAnalyzer:
             """Find patch that maximally activates prototype or prototype group"""
             sample_batch = sample.unsqueeze(0).to(self.device)
             
-            # Handle both single prototype and prototype groups
-            if isinstance(proto_idx, str) and "_" in proto_idx:
-                # Parse prototype group from string (e.g. "3_22" -> [3, 22])
+            # Handle different types of prototype references
+            if isinstance(proto_idx, list):
+                # Direct list of prototype indices
+                proto_indices = proto_idx
+                
+                with torch.no_grad():
+                    proto_features, pooled, _ = self.model(sample_batch, inference=True)
+                    activations = [pooled[0, idx].item() for idx in proto_indices]
+                    strongest_idx = proto_indices[np.argmax(activations)]
+                    max_val = max(activations)
+                    activation_map = proto_features[0, strongest_idx]
+            elif isinstance(proto_idx, str) and "_" in proto_idx:
+                # String representation of prototype group (e.g. "3_22")
                 proto_indices = [int(idx) for idx in proto_idx.split("_")]
                 
-                # Find the most activating prototype in the group
                 with torch.no_grad():
                     proto_features, pooled, _ = self.model(sample_batch, inference=True)
                     activations = [pooled[0, idx].item() for idx in proto_indices]
@@ -1285,13 +1298,14 @@ class MultiLayerAttributionAnalyzer:
                     max_val = max(activations)
                     activation_map = proto_features[0, strongest_idx]
             else:
-                # Single prototype case (handle both int and string representations)
+                # Single prototype case
                 proto_num = int(proto_idx) if isinstance(proto_idx, str) else proto_idx
                 with torch.no_grad():
                     proto_features, pooled, _ = self.model(sample_batch, inference=True)
                     max_val = pooled[0, proto_num].item()
                     activation_map = proto_features[0, proto_num]
-    
+                
+
             
             # Find coordinates of maximum activation
             if proto_features.ndim == 4:
@@ -1341,22 +1355,31 @@ class MultiLayerAttributionAnalyzer:
         # Process prototypes
         output_data = {}
         print("Processing prototype data...")
-        
+        print(pure_results.keys())
         for proto_idx in prototype_indices:
-            if proto_idx not in pure_results:
-                print(f"Cannot find prototype group {proto_idx}")
+            proto_key = proto_idx
+            
+            if isinstance(proto_idx, list):
+                proto_key = "_".join(map(str, proto_idx))
+
+            if isinstance(proto_idx, list):
+                proto_idx = "_".join(map(str, proto_idx))
+            
+            if proto_key not in pure_results: #and proto_idx not in pure_results:
+                print(f"Cannot find prototype {proto_key}")
                 continue
             
-            result = pure_results[proto_idx]
+            # Try to get with both key formats
+            result = pure_results.get(proto_key, pure_results.get(proto_idx, None))
+            if result is None:
+                continue
+                
             samples = result.get('samples', result.get('top_samples'))
             cluster_labels = result['cluster_labels'] 
             activations = result.get('top_activations', [1.0] * len(samples))
             
-            # Generate group name for prototype group (e.g., "3_22" for [3, 22])
-            if isinstance(proto_idx, list):
-                proto_name = "_".join(map(str, proto_idx))
-            else:
-                proto_name = str(proto_idx)
+            # Generate group name for prototype group
+            proto_name = proto_key if isinstance(proto_key, str) else str(proto_key)
             
             proto_data = {"clusters": {}}
             unique_clusters = np.unique(cluster_labels)
@@ -1364,23 +1387,24 @@ class MultiLayerAttributionAnalyzer:
             for cluster_id in unique_clusters:
                 mask = cluster_labels == cluster_id
                 indices = np.where(mask)[0]
-                
                 if len(indices) == 0:
                     continue
                     
+                print('Getting highest activations ')
                 # Take top 8 samples by activation
                 cluster_acts = [activations[i] for i in indices]
                 sorted_idx = np.argsort(cluster_acts)[::-1]
-                top_indices = [indices[i] for i in sorted_idx[:8]]
+                top_indices = [indices[i] for i in sorted_idx[:min(10, len(sorted_idx))]]
                 
                 cluster_samples = []
                 for idx in top_indices:
                     # Get sample and find activation
                     sample = samples[idx]
+                    print(f'finding top activating patches and samples for {idx}')
                     patch, coords, act_val = find_activation_patch(sample, proto_idx)
                     
                     # Create images WITH highlighted regions
-                    full_image = tensor_to_base64(sample, coords)  # This draws the rectangle!
+                    full_image = tensor_to_base64(sample, coords)
                     patch_image = tensor_to_base64(patch)
                     
                     sample_data = {
@@ -1402,7 +1426,7 @@ class MultiLayerAttributionAnalyzer:
         with open(js_file, "w") as f:
             f.write(f"const prototypeData = {json.dumps(output_data)};")
         
-        # Create HTML file with updated UI for prototype groups
+        # HTML file content remains the same
         html_file = "prototype_visualization.html"
         html = """
     <!DOCTYPE html>
@@ -1798,7 +1822,8 @@ class MultiLayerAttributionAnalyzer:
 
     def analyze_related_prototypes(self, dataloader, prototype_groups, layer_indices=[-1, -5, -10], 
                             n_clusters=None, adaptive=True, max_clusters=5,
-                            clustering_method='hdbscan', visualize=True, max_samples=100):
+                            clustering_method='hdbscan', visualize=True, max_samples=100,
+                            layer_weights=None):
         """
         Analyze potentially related prototypes by jointly clustering their circuits.
         
@@ -1822,6 +1847,7 @@ class MultiLayerAttributionAnalyzer:
         # Collect top activating samples for all prototypes
         all_samples = []
         all_activations = []
+        all_activated_samples = []
         sample_prototype_map = []  # Track which prototype each sample belongs to
         
         for group_idx, proto_group in enumerate(prototype_groups):
@@ -1836,11 +1862,12 @@ class MultiLayerAttributionAnalyzer:
                 print(f"Finding top activating samples for {proto_idx} in {group_name}")
                 # Find top activating samples
                 pure_analyzer = PURE(self.model, device=self.device, num_ref_samples=max_samples)
-                samples, activations = pure_analyzer.find_top_activating_samples(dataloader, proto_idx)
+                samples, activations, activated_samples = pure_analyzer.find_top_activating_samples(dataloader, proto_idx, True)
                 
                 # Store samples and track which prototype they belong to
                 all_samples.append(samples)
                 all_activations.extend(activations)
+                all_activated_samples.append(activated_samples)
                 sample_prototype_map.extend([(group_name, proto_idx)] * len(samples))
 
         
@@ -1848,6 +1875,8 @@ class MultiLayerAttributionAnalyzer:
         if not all_samples:
             return {"error": "No samples found for prototypes"}
             
+
+        combined_act_samples = torch.cat(all_activated_samples)
         combined_samples = torch.cat(all_samples)
         print(f"Collected {len(combined_samples)} samples from all prototypes")
         
@@ -1912,7 +1941,7 @@ class MultiLayerAttributionAnalyzer:
         
         # Cluster the combined circuits
         cluster_labels, centroids = self.cluster_multi_layer_circuits(
-            combined_circuits, n_clusters, method=clustering_method
+            combined_circuits, n_clusters, method=clustering_method, layer_weights=layer_weights
         )
         
         # Analyze how samples from each prototype map to clusters
@@ -1967,16 +1996,6 @@ class MultiLayerAttributionAnalyzer:
                 'n_clusters': len(np.unique(proto_cluster_labels))
             }
         
-        # Also include the original combined results for reference
-        combined_results = {
-            "cluster_labels": cluster_labels,
-            "centroids": centroids,
-            "sample_prototype_map": sample_prototype_map,
-            "prototype_cluster_distributions": prototype_cluster_distributions,
-            "n_clusters": n_clusters,
-            "samples": combined_samples,
-            "all_activations": all_activations
-        }
         
         # Add group-to-cluster naming mappings
         group_to_named_clusters = {}
@@ -1996,11 +2015,23 @@ class MultiLayerAttributionAnalyzer:
             "samples": combined_samples,
             "top_activations": all_activations
         }
+
+        # Also include the original combined results for reference
+        combined_results = {
+            "cluster_labels": cluster_labels,
+            "centroids": centroids,
+            "sample_prototype_map": sample_prototype_map,
+            "group_to_named_clusters": group_to_named_clusters,
+            "n_clusters": n_clusters,
+            "samples": combined_samples,
+            "all_activations": all_activations
+        }
         
         # Visualize if requested
         if visualize:
             print("Visualizing prototype clusters...")
-            html_file = self.create_activation_patch_visualization(reorganized_results)
-            results["visualization_file"] = html_file
+            figures = self.visualize_multi_layer_umap_with_gallery(combined_circuits, cluster_labels, prototype_groups, combined_act_samples)
+            # html_file = self.create_activation_patch_visualization(reorganized_results)
+            # combined_results["visualization_file"] = html_file
         
-        return results
+        return combined_results

@@ -1,4 +1,5 @@
 import torch
+import random
 import os
 import argparse
 from prototype_management import PrototypeManager
@@ -67,6 +68,13 @@ def split_and_merge_prototypes(args=None):
     else:
         prototype_indices = args.prototype_indices if hasattr(args, 'prototype_indices') else [3, 29, 30]  # Example prototypes
     
+    # prototype_indices  = prototype_indices + [[3,22]]
+    random_samples = 4
+
+    prototype_indices  = [[3,22,102,103, 135, 140]] 
+    for i in range(random_samples):
+        prototype_indices.append(list(np.random.choice(args.num_features, size=(5), replace=False)))
+    # prototype_indices  = [[3,22]]
     print(f"Analyzing {len(prototype_indices)} prototypes: {prototype_indices}")
     
     # Step 2: Split polysemantic prototypes
@@ -82,6 +90,7 @@ def split_and_merge_prototypes(args=None):
         #     visualize=args.visualize_results,
         #     algorithm=args.clustering_algorithm  # Use the specified clustering algorithm
         # )
+
         split_results = prototype_manager.split_multiple_prototypes_multi_depth(
             trainloader_normal,
             prototype_indices,
@@ -91,190 +100,6 @@ def split_and_merge_prototypes(args=None):
             algorithm=args.clustering_algorithm  # Use the specified clustering algorithm
         )
         
-        # Find prototypes that are actually polysemantic
-        polysemantic_prototypes = [
-            proto_idx for proto_idx, result in split_results.items() 
-            if result['is_polysemantic']
-        ]
-        
-        print(f"Found {len(polysemantic_prototypes)} polysemantic prototypes: {polysemantic_prototypes}")
-        
-        if len(polysemantic_prototypes) > 0 and args.apply_splitting:
-            # Filter results to only include polysemantic prototypes
-            poly_results = {idx: split_results[idx] for idx in polysemantic_prototypes}
-            
-            # Expand the model with new prototypes
-            print(f"Expanding model with split prototypes (scaling={args.splitting_scale})...")
-            
-            # Reference dataloader for manifold projection (if enabled)
-            # ref_dataloader = trainloader_normal if args.use_manifold_projection else None
-            
-            # expanded_model, prototype_mapping = prototype_manager.expand_model_with_split_prototypes(
-            #     poly_results, 
-            #     scaling=args.splitting_scale,
-            #     use_adaptive_expansion=args.use_adaptive_expansion,
-            #     manifold_projection=args.use_manifold_projection,
-            #     reference_dataloader=ref_dataloader
-            # )
-            for prototype in polysemantic_prototypes:
-                expanded_model, prototype_mapping = prototype_manager.split_prototype_with_centroids(
-                    poly_results,
-                    proto_idx=prototype,
-                    step_size=args.splitting_scale
-                )
-
-            expanded_model = prototype_manager.finetune_split_prototypes(split_results,expanded_model, prototype_mapping)
-
-            
-            print(f"Model expanded from {num_prototypes} to {expanded_model.module._num_prototypes} prototypes")
-            print("Prototype mapping:", prototype_mapping)
-            
-            # Save the expanded model if requested
-            if args.save_expanded_model:
-                save_path = f"{args.log_dir}/expanded_model.pt"
-                torch.save({
-                    'model_state_dict': expanded_model.state_dict(),
-                    'prototype_mapping': prototype_mapping,
-                    'polysemantic_prototypes': polysemantic_prototypes
-                }, save_path)
-                print(f"Expanded model saved to {save_path}")
-            
-            # Visualize the expanded model prototypes
-            if args.visualize_results:
-                print("\nVisualizing prototypes after splitting...")
-                # Create visualization directory
-                vis_dir = os.path.join(args.log_dir, "visualizations", "after_splitting")
-                os.makedirs(vis_dir, exist_ok=True)
-                
-                # First, create a gallery of all prototypes
-                prototype_manager.create_prototype_gallery(
-                    trainloader_normal,
-                    output_dir=vis_dir,
-                    n_samples=5,
-                    n_cols=5,
-                    prototype_indices=prototype_indices,
-                    max_prototypes=100,
-                    sort_by_weight=True
-                )
-                
-                # Then, visualize detailed activation examples for modified prototypes
-                affected_prototypes = []
-                
-                # Include original prototypes
-                affected_prototypes.extend(polysemantic_prototypes)
-                
-                # Include new prototypes created from split
-                for proto_idx, mappings in prototype_mapping.items():
-                    if len(mappings) > 1:  # This prototype was split
-                        # Skip the first since it's the original prototype
-                        affected_prototypes.extend(mappings[1:])
-                
-                # Visualize the affected prototypes with their top activations
-                prototype_manager.visualize_prototypes_after_modification(
-                    trainloader_normal,
-                    affected_prototypes,
-                    operation_name="Split",
-                    n_samples=10,
-                    output_dir=os.path.join(vis_dir, "activations"),
-                    max_prototypes=50
-                )
-                
-                # Create heatmap visualizations
-                prototype_manager.visualize_prototype_heatmaps(
-                    trainloader_normal,
-                    affected_prototypes,
-                    n_samples=3,
-                    output_dir=os.path.join(vis_dir, "heatmaps"),
-                    max_prototypes=20
-                )
-                
-                print(f"Visualizations saved to {vis_dir}")
-    
-    # Step 3: Identify and merge similar prototypes
-    if args.merge_prototypes:
-        print("\n--- MERGING SIMILAR PROTOTYPES ---")
-        
-        # Find candidate pairs for merging
-        merge_candidates = prototype_manager.identify_merge_candidates(
-            similarity_threshold=args.merge_threshold,
-            similarity_type=args.similarity_type,
-            min_weight=args.min_weight
-        )
-        
-        print(f"Found {len(merge_candidates)} candidate pairs for merging")
-        
-        # Show the top candidates
-        if len(merge_candidates) > 0:
-            print("\nTop merge candidates:")
-            for p1, p2, sim in merge_candidates[:5]:  # Show top 5
-                print(f"  Prototypes {p1} and {p2}: similarity = {sim:.4f}")
-            
-            # Visualize a few merge candidates if requested
-            if args.visualize_results and len(merge_candidates) > 0:
-                for i in range(min(3, len(merge_candidates))):
-                    p1, p2, _ = merge_candidates[i]
-                    prototype_manager.compare_prototypes([p1, p2], trainloader_normal)
-            
-            # Apply merging if requested
-            if args.apply_merging:
-                # Convert to list of pairs
-                pairs_to_merge = [(p1, p2) for p1, p2, _ in merge_candidates[:args.max_pairs_to_merge]]
-                
-                # Merge the prototypes
-                print(f"Merging {len(pairs_to_merge)} prototype pairs...")
-                merged_model = prototype_manager.merge_prototypes(
-                    pairs_to_merge, merge_strategy=args.merge_strategy
-                )
-                
-                # Save the merged model if requested
-                if args.save_merged_model:
-                    save_path = f"{args.log_dir}/merged_model.pt"
-                    torch.save({
-                        'model_state_dict': merged_model.state_dict(),
-                        'merged_pairs': pairs_to_merge
-                    }, save_path)
-                    print(f"Merged model saved to {save_path}")
-                
-                # Visualize the merged model prototypes
-                if args.visualize_results:
-                    print("\nVisualizing prototypes after merging...")
-                    # Create visualization directory
-                    vis_dir = os.path.join(args.log_dir, "visualizations", "after_merging")
-                    os.makedirs(vis_dir, exist_ok=True)
-                    
-                    # First, create a gallery of all prototypes
-                    prototype_manager.create_prototype_gallery(
-                        trainloader_normal,
-                        output_dir=vis_dir,
-                        n_samples=5,
-                        n_cols=5,
-                        max_prototypes=100,
-                        sort_by_weight=True
-                    )
-                    
-                    # Collect affected prototypes (first elements from pairs - these are the ones that remain)
-                    affected_prototypes = [p1 for p1, _ in pairs_to_merge]
-                    
-                    # Visualize the affected prototypes with their top activations
-                    prototype_manager.visualize_prototypes_after_modification(
-                        trainloader_normal,
-                        affected_prototypes,
-                        operation_name="Merge",
-                        n_samples=10,
-                        output_dir=os.path.join(vis_dir, "activations"),
-                        max_prototypes=50
-                    )
-                    
-                    # Create heatmap visualizations
-                    prototype_manager.visualize_prototype_heatmaps(
-                        trainloader_normal,
-                        affected_prototypes,
-                        n_samples=3,
-                        output_dir=os.path.join(vis_dir, "heatmaps"),
-                        max_prototypes=20
-                    )
-                    
-                    print(f"Visualizations saved to {vis_dir}")
     
     print("\nProcess completed successfully!")
 

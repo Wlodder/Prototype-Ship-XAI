@@ -1,4 +1,7 @@
 from typing import List
+from util.vis_pipnet import get_img_coordinates
+from util.func import get_patch_size
+from PIL import Image, ImageDraw
 from matplotlib import pyplot as plt
 import numpy as np
 from sklearn.cluster import KMeans
@@ -68,7 +71,8 @@ class PURE:
 
    
         
-    def find_top_activating_samples(self, dataloader, prototype_idx):
+    def find_top_activating_samples(self, dataloader, prototype_idx,
+                                     return_masked_attributions=False, activation_threshold=0.2):
         """
         Find the top activating samples for a prototype.
         
@@ -82,6 +86,7 @@ class PURE:
         self.model.eval()
         activations = []
         images = []
+        activated_images = []
         
         with torch.no_grad():
             for batch in dataloader:
@@ -92,10 +97,49 @@ class PURE:
                     inputs = batch.to(self.device)
                 
                 # Forward pass
-                _, pooled, _ = self.model(inputs, inference=False)
+                proto_features, pooled, _ = self.model(inputs, inference=False)
                 
+                activation_map = proto_features[0, prototype_idx]
+                img_h, img_w = inputs[0].shape[1:]
+                patch_size = 32
+                
+                # Use fixed 32px patch size
+                
+                # Calculate patch boundaries
+
                 # Get activations for the target prototype
                 batch_activations = pooled[:, prototype_idx].cpu()
+                for i,_ in enumerate(batch_activations):
+                    max_per_prototype, max_idx_per_prototype = torch.max(proto_features, dim=0)
+                    # In PyTorch, images are represented as [channels, height, width]
+                    max_per_prototype_h, max_idx_per_prototype_h = torch.max(max_per_prototype, dim=1)
+                    max_per_prototype_w, max_idx_per_prototype_w = torch.max(max_per_prototype_h, dim=1)
+                    h_idx = max_idx_per_prototype_h[prototype_idx, max_idx_per_prototype_w[prototype_idx]]
+                    w_idx = max_idx_per_prototype_w[prototype_idx]
+                    # max_pos = torch.where(activation_map == torch.max(activation_map))
+                    # max_h, max_w = max_pos[0][0].item(), max_pos[1][0].item()
+                    
+                    # Convert feature map coordinates to image coordinates
+                    skip = round((img_h - patch_size) / (activation_map.shape[1]-1))
+                    h_min, h_max, w_min, w_max = get_img_coordinates(img_h, proto_features.shape, patch_size, skip, h_idx, w_idx)
+
+                    act_img = inputs[i].cpu().clone()
+                    x, y, w, h = w_min, h_min, w_max-w_min, h_max-h_min
+                    # color=[1.0,1.0,0.0]
+                    color=[2.68, -1.99, -2.16]
+                    thickness=3
+                    color_tensor = torch.tensor(color).view(3,1)
+                    # Draw red rectangle with 3px width
+                    for t in range(thickness):
+                        act_img[:, y+t, x:x+w] = color_tensor
+                        act_img[:, y+h-t-1, x:x+w] = color_tensor
+                    
+                    # Draw left and right vertical lines
+                    for t in range(thickness):
+                        act_img[:, y:y+h, x+t] = color_tensor
+                        act_img[:, y:y+h, x+w-t-1] = color_tensor
+    
+                    activated_images.append(act_img)
                 
                 for i, activation in enumerate(batch_activations):
                     activations.append(activation.item())
@@ -103,12 +147,18 @@ class PURE:
                 
         # Sort by activation and get top samples
         sorted_indices = np.argsort(activations)[::-1]  # Descending order
+        sorted_indices = [sorted_index  for activation, sorted_index in zip(activations,sorted_indices) if activation > activation_threshold]
         top_indices = sorted_indices[:self.num_ref_samples]
         
         top_samples = torch.stack([images[i] for i in top_indices])
         top_activations = [activations[i] for i in top_indices]
-        
+        top_act_images = torch.stack([activated_images[i] for i in top_indices])
+
+        if return_masked_attributions:
+            return top_samples, top_activations, top_act_images
+
         return top_samples, top_activations
+
 
     def compute_circuits(self, top_samples, prototype_idx):
         """
