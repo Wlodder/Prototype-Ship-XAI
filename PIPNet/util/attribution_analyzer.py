@@ -1924,90 +1924,6 @@ class MultiLayerAttributionAnalyzer:
             distribution = {k: v/total for k, v in clusters.items()}
             prototype_cluster_distributions[proto_idx] = distribution
         
-        # Calculate similarity between prototypes based on cluster overlap
-        similarity_matrix = np.zeros((len(prototype_groups), len(prototype_groups)))
-        all_proto_indices = []
-        
-        for i, group1 in enumerate(prototype_groups):
-            proto_indices1 = [group1] if isinstance(group1, int) else group1
-            for proto1 in proto_indices1:
-                if proto1 not in prototype_cluster_distributions:
-                    continue
-                
-                for j, group2 in enumerate(prototype_groups):
-                    proto_indices2 = [group2] if isinstance(group2, int) else group2
-                    for proto2 in proto_indices2:
-                        if proto2 not in prototype_cluster_distributions:
-                            continue
-                        
-                        # Get distributions
-                        dist1 = prototype_cluster_distributions[proto1]
-                        dist2 = prototype_cluster_distributions[proto2]
-                        
-                        # Calculate Jensen-Shannon divergence
-                        from scipy.spatial.distance import jensenshannon
-                        
-                        # Prepare vectors for all possible clusters
-                        all_clusters = sorted(set(dist1.keys()).union(set(dist2.keys())))
-                        vec1 = [dist1.get(c, 0) for c in all_clusters]
-                        vec2 = [dist2.get(c, 0) for c in all_clusters]
-                        
-                        # Calculate JS divergence (0 = identical, 1 = completely different)
-                        js_div = jensenshannon(vec1, vec2)
-                        
-                        # Convert to similarity (1 = identical, 0 = completely different)
-                        similarity = 1 - js_div
-                        
-                        similarity_matrix[i, j] = max(similarity_matrix[i, j], similarity)
-        
-        # Visualize if requested
-        if visualize:
-            # Create cluster distribution visualization
-            import matplotlib.pyplot as plt
-            
-            figures = self.visualize_multi_layer_umap_with_gallery(combined_circuits, cluster_labels, prototype_groups, combined_samples)
-            # Create a figure showing cluster distributions for each prototype
-            # plt.figure(figsize=(12, 8))
-            
-            # # Get all unique prototypes
-            # all_protos = sorted(prototype_cluster_distributions.keys())
-            
-            # # Create a bar chart showing distribution
-            # x = np.arange(len(all_protos))
-            # bar_width = 0.8 / n_clusters
-            
-            # for cluster in range(n_clusters):
-            #     heights = [prototype_cluster_distributions[p].get(cluster, 0) for p in all_protos]
-            #     plt.bar(x + cluster * bar_width, heights, width=bar_width, 
-            #         label=f'Cluster {cluster+1}')
-            
-            # plt.xlabel('Prototype Index')
-            # plt.ylabel('Proportion of Samples')
-            # plt.title('Cluster Distribution per Prototype')
-            # plt.xticks(x + bar_width * n_clusters / 2, all_protos)
-            # plt.legend()
-            # plt.tight_layout()
-            # plt.show()
-            
-            # # Create similarity matrix visualization
-            # plt.figure(figsize=(10, 8))
-            # plt.imshow(similarity_matrix, cmap='viridis', vmin=0, vmax=1)
-            # plt.colorbar(label='Similarity Score')
-            # plt.title('Prototype Group Similarity Matrix')
-            
-            # # Add text annotations
-            # for i in range(len(prototype_groups)):
-            #     for j in range(len(prototype_groups)):
-            #         text = f"{similarity_matrix[i, j]:.2f}"
-            #         plt.text(j, i, text, ha='center', va='center', 
-            #                 color='white' if similarity_matrix[i, j] < 0.7 else 'black')
-            
-            # plt.xticks(range(len(prototype_groups)), 
-            #         [str(g) if isinstance(g, int) else str(g) for g in prototype_groups])
-            # plt.yticks(range(len(prototype_groups)), 
-            #         [str(g) if isinstance(g, int) else str(g) for g in prototype_groups])
-            # plt.tight_layout()
-            # plt.show()
         
         # Prepare results
         results = {
@@ -2015,7 +1931,6 @@ class MultiLayerAttributionAnalyzer:
             "centroids": centroids,
             "sample_prototype_map": sample_prototype_map,
             "prototype_cluster_distributions": prototype_cluster_distributions,
-            "similarity_matrix": similarity_matrix,
             "n_clusters": n_clusters,
             "samples": combined_samples
         }
