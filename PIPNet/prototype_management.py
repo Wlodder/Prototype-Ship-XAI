@@ -520,31 +520,47 @@ class PrototypeManager:
         analyzer = MultiLayerAttributionAnalyzer(self.model, device=self.device)
         results = {}
 
-        results = analyzer.analyze_related_prototypes(dataloader=dataloader,
-                                                      prototype_groups=prototype_indices,
-                                                      layer_indices=[-2,-3,-4,-5,-6,-7],
-                                                      adaptive=True,
-                                                      max_clusters=5,
-                                                      clustering_method='hdbscan',
-                                                      visualize=True,
-                                                      max_samples=100)
+    def split_multiple_prototypes_multi_depth(self, dataloader, prototype_indices, n_clusters=None, 
+                                visualize=True, adaptive=True, max_clusters=5,
+                                algorithm='kmeans'):
+        """
+        Split multiple prototypes and return their results, supporting groups of prototypes.
+        
+        Args:
+            dataloader: DataLoader containing the dataset
+            prototype_indices: List where each item is either a single prototype index 
+                            or a list of related prototype indices
+            n_clusters: Number of clusters per prototype group
+            
+        Returns:
+            Dictionary mapping prototype indices or groups to their split results
+        """
+        analyzer = MultiLayerAttributionAnalyzer(self.model, device=self.device)
+        
+        # Normalize prototype_indices to ensure consistent handling
+        normalized_indices = []
+        for proto in prototype_indices:
+            if isinstance(proto, int):
+                normalized_indices.append([proto])
+            else:
+                normalized_indices.append(proto)
+        
+        results = analyzer.analyze_related_prototypes(
+            dataloader=dataloader,
+            prototype_groups=normalized_indices,
+            layer_indices=[-2,-3,-4,-5,-6,-7],
+            adaptive=adaptive,
+            max_clusters=max_clusters,
+            clustering_method=algorithm,
+            visualize=visualize,
+            max_samples=100
+        )
 
-        # for proto_idx in prototype_indices:
-        #     split_result = analyzer.analyze_prototype(
-        #         dataloader=dataloader,
-        #         prototype_idx=proto_idx,  # Choose any prototype to analyze
-        #         layer_indices=[-2, -3, -4, -5, -6, -7],  # Analyze at different depths
-        #         adaptive=True,
-        #         clustering_method='hdbscan',
-        #         visualize=True,
-        #         max_samples=200
-        #     )
-        #     results[proto_idx] = split_result
-
-        html = analyzer.create_activation_patch_visualization(results, prototype_indices)
+        if visualize:
+            html = analyzer.create_activation_patch_visualization(results, normalized_indices)
 
         return results
-    
+
     
     def project_to_prototype_manifold(self, new_prototypes, reference_dataloader=None, steps=10):
         """

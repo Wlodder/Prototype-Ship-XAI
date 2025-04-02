@@ -1236,31 +1236,29 @@ class MultiLayerAttributionAnalyzer:
         return patch, (w_min, h_min, w_max - w_min, h_max - h_min)
 
     def create_activation_patch_visualization(self, pure_results, prototype_indices=None):
-        """
-        Create an HTML visualization showing highly activating patches for prototypes.
-        
-        Args:
-            pure_results: Dictionary of results from analyzing prototypes
-            prototype_indices: Specific prototypes to include (None for all)
-            
-        Returns:
-            Path to the saved HTML file
-        """
+        """Create HTML visualization showing highly activating patches with rectangles highlighting activated regions."""
         import json
         import base64
         from io import BytesIO
-        from PIL import Image
+        from PIL import Image, ImageDraw
         import torch
         import os
         import numpy as np
         
-        # Helper function for tensor to base64 image conversion
-        def tensor_to_base64(tensor):
+        # Helper function for tensor to base64 image conversion WITH highlighted region
+        def tensor_to_base64(tensor, coordinates=None):
             try:
                 img = tensor.cpu().permute(1, 2, 0).numpy()
                 img = (img - img.min()) / (img.max() - img.min() + 1e-8)
                 img = (img * 255).astype('uint8')
                 pil_img = Image.fromarray(img)
+                
+                # Draw rectangle if coordinates provided
+                if coordinates:
+                    draw = ImageDraw.Draw(pil_img)
+                    x, y, w, h = coordinates
+                    # Draw red rectangle with 3px width
+                    draw.rectangle([x, y, x+w, y+h], outline="red", width=3)
                 
                 buffered = BytesIO()
                 pil_img.save(buffered, format="JPEG", quality=80)
@@ -1270,39 +1268,44 @@ class MultiLayerAttributionAnalyzer:
                 print(f"Error converting image: {e}")
                 return ""
         
-        # Function to find highly activating patch in an image
         def find_activation_patch(sample, proto_idx):
-            """
-            Find the patch that maximally activates the prototype.
-            Returns the patch tensor and its coordinates.
-            """
+            """Find patch that maximally activates prototype or prototype group"""
             sample_batch = sample.unsqueeze(0).to(self.device)
             
-            # Get feature representations
-            with torch.no_grad():
-                proto_features, pooled, _ = self.model(sample_batch, inference=True)
+            # Handle both single prototype and prototype groups
+            if isinstance(proto_idx, str) and "_" in proto_idx:
+                # Parse prototype group from string (e.g. "3_22" -> [3, 22])
+                proto_indices = [int(idx) for idx in proto_idx.split("_")]
                 
-            # Get activation map for this prototype
-            if proto_features.ndim == 4:  # Spatial maps (B, C, H, W)
-                activation_map = proto_features[0, proto_idx]
+                # Find the most activating prototype in the group
+                with torch.no_grad():
+                    proto_features, pooled, _ = self.model(sample_batch, inference=True)
+                    activations = [pooled[0, idx].item() for idx in proto_indices]
+                    strongest_idx = proto_indices[np.argmax(activations)]
+                    max_val = max(activations)
+                    activation_map = proto_features[0, strongest_idx]
+            else:
+                # Single prototype case (handle both int and string representations)
+                proto_num = int(proto_idx) if isinstance(proto_idx, str) else proto_idx
+                with torch.no_grad():
+                    proto_features, pooled, _ = self.model(sample_batch, inference=True)
+                    max_val = pooled[0, proto_num].item()
+                    activation_map = proto_features[0, proto_num]
+    
+            
+            # Find coordinates of maximum activation
+            if proto_features.ndim == 4:
+                max_pos = torch.where(activation_map == torch.max(activation_map))
                 
-                # Find coordinates of maximum activation
-                max_val = torch.max(activation_map)
-                max_pos = torch.where(activation_map == max_val)
-                
-                # Handle case where there might be multiple equal maxima
                 if len(max_pos[0]) > 0:
                     max_h, max_w = max_pos[0][0].item(), max_pos[1][0].item()
                     
-                    # Map to image coordinates
+                    # Convert feature map coordinates to image coordinates
                     img_h, img_w = sample.shape[1:]
                     feat_h, feat_w = activation_map.shape
-                    
-                    # Calculate scale factors
                     scale_h, scale_w = img_h / feat_h, img_w / feat_w
                     
-                    # Calculate patch size (adjust as needed)
-                    # patch_size = min(img_h, img_w) // 4  # Use 1/4 of image size
+                    # Use fixed 32px patch size
                     patch_size = 32
                     
                     # Calculate patch center in image coordinates
@@ -1317,11 +1320,9 @@ class MultiLayerAttributionAnalyzer:
                     
                     # Extract patch
                     patch = sample[:, h_min:h_max, w_min:w_max]
-                    
-                    # Return patch and coordinates
-                    return patch, (w_min, h_min, w_max - w_min, h_max - h_min), float(max_val.cpu())
+                    return patch, (w_min, h_min, w_max-w_min, h_max-h_min), float(max_val)
             
-            # Fallback to center crop if spatial information not available
+            # Fallback to center crop
             img_h, img_w = sample.shape[1:]
             patch_size = min(img_h, img_w) // 3
             center_h, center_w = img_h // 2, img_w // 2
@@ -1331,26 +1332,31 @@ class MultiLayerAttributionAnalyzer:
             w_max = min(img_w, center_w + patch_size // 2)
             
             patch = sample[:, h_min:h_max, w_min:w_max]
-            return patch, (w_min, h_min, w_max - w_min, h_max - h_min), float(pooled[0, proto_idx].cpu())
+            return patch, (w_min, h_min, w_max-w_min, h_max-h_min), float(max_val)
         
-        # Select prototypes
+        # Normalize prototype_indices to handle groups
         if prototype_indices is None:
             prototype_indices = list(pure_results.keys())
-            
-        # Create simplified data structure
+        
+        # Process prototypes
         output_data = {}
         print("Processing prototype data...")
-        print(prototype_indices, pure_results.keys())
+        
         for proto_idx in prototype_indices:
             if proto_idx not in pure_results:
-                print(f"Can not find prototype group {proto_idx}")
+                print(f"Cannot find prototype group {proto_idx}")
                 continue
             
             result = pure_results[proto_idx]
-            print(result.keys())
-            samples = result['samples'] 
-            cluster_labels = result['cluster_labels']
-            activations = result['top_activations']
+            samples = result.get('samples', result.get('top_samples'))
+            cluster_labels = result['cluster_labels'] 
+            activations = result.get('top_activations', [1.0] * len(samples))
+            
+            # Generate group name for prototype group (e.g., "3_22" for [3, 22])
+            if isinstance(proto_idx, list):
+                proto_name = "_".join(map(str, proto_idx))
+            else:
+                proto_name = str(proto_idx)
             
             proto_data = {"clusters": {}}
             unique_clusters = np.unique(cluster_labels)
@@ -1369,17 +1375,17 @@ class MultiLayerAttributionAnalyzer:
                 
                 cluster_samples = []
                 for idx in top_indices:
-                    # Get images
+                    # Get sample and find activation
                     sample = samples[idx]
-                    full_image = tensor_to_base64(sample)
-                    
-                    # Find highly activating patch
                     patch, coords, act_val = find_activation_patch(sample, proto_idx)
+                    
+                    # Create images WITH highlighted regions
+                    full_image = tensor_to_base64(sample, coords)  # This draws the rectangle!
                     patch_image = tensor_to_base64(patch)
                     
                     sample_data = {
                         "id": int(idx),
-                        "activation": float(activations[idx]),
+                        "activation": float(activations[idx]) if idx < len(activations) else 0.0,
                         "act_value": float(act_val),
                         "image": full_image,
                         "patch": patch_image,
@@ -1389,14 +1395,14 @@ class MultiLayerAttributionAnalyzer:
                 
                 proto_data["clusters"][int(cluster_id)] = cluster_samples
             
-            output_data[int(proto_idx)] = proto_data
+            output_data[proto_name] = proto_data
         
-        # Save data to separate JS file
+        # Create JS and HTML for visualization
         js_file = "prototype_data.js"
         with open(js_file, "w") as f:
             f.write(f"const prototypeData = {json.dumps(output_data)};")
         
-        # Create HTML file with external data reference
+        # Create HTML file with updated UI for prototype groups
         html_file = "prototype_visualization.html"
         html = """
     <!DOCTYPE html>
@@ -1493,11 +1499,17 @@ class MultiLayerAttributionAnalyzer:
             
             let currentCluster = null;
             
-            // Populate prototype dropdown
+            // Populate prototype dropdown with proper naming
             for (const protoId in prototypeData) {
                 const option = document.createElement('option');
                 option.value = protoId;
-                option.textContent = `Prototype ${protoId}`;
+                
+                // Display prototype name (handle groups differently)
+                if (protoId.includes('_')) {
+                    option.textContent = `Prototype Group [${protoId}]`;
+                } else {
+                    option.textContent = `Prototype ${protoId}`;
+                }
                 protoSelect.appendChild(option);
             }
             
@@ -1524,7 +1536,9 @@ class MultiLayerAttributionAnalyzer:
                 
                 // Update prototype info
                 const totalClusters = clusters.length;
-                protoInfo.innerHTML = `<strong>Prototype ${protoId}</strong> - ${totalClusters} clusters detected`;
+                let protoDisplayName = protoId.includes('_') ? 
+                    `Prototype Group [${protoId}]` : `Prototype ${protoId}`;
+                protoInfo.innerHTML = `<strong>${protoDisplayName}</strong> - ${totalClusters} clusters detected`;
                 
                 clusters.forEach((clusterId, i) => {
                     const clusterSamples = protoData.clusters[clusterId];
@@ -1536,21 +1550,16 @@ class MultiLayerAttributionAnalyzer:
                     btn.style.color = 'white';
                     
                     btn.onclick = () => {
-                        // Remove active class from all buttons
                         document.querySelectorAll('.cluster-btn').forEach(b => 
                             b.classList.remove('active-cluster'));
-                        
-                        // Add active class to this button
                         btn.classList.add('active-cluster');
-                        
-                        // Show cluster
                         showCluster(protoId, clusterId);
                     };
                     
                     clusterButtons.appendChild(btn);
                 });
                 
-                // Show first cluster
+                // Show first cluster by default
                 if (clusters.length > 0) {
                     const firstButton = document.querySelector('.cluster-btn');
                     if (firstButton) {
@@ -1583,6 +1592,20 @@ class MultiLayerAttributionAnalyzer:
                     const body = document.createElement('div');
                     body.className = 'card-body';
                     
+                    // Add full image with highlighted region
+                    const fullSection = document.createElement('div');
+                    fullSection.className = 'section';
+                    
+                    const fullLabel = document.createElement('h4');
+                    fullLabel.textContent = 'Activated Region';
+                    
+                    const fullImg = document.createElement('img');
+                    fullImg.src = `data:image/jpeg;base64,${sample.image}`;
+                    fullImg.alt = 'Full Image with Highlighted Region';
+                    
+                    fullSection.appendChild(fullLabel);
+                    fullSection.appendChild(fullImg);
+                    
                     // Add patch image section
                     const patchSection = document.createElement('div');
                     patchSection.className = 'section';
@@ -1598,23 +1621,9 @@ class MultiLayerAttributionAnalyzer:
                     patchSection.appendChild(patchLabel);
                     patchSection.appendChild(patchImg);
                     
-                    // Add full image section
-                    const fullSection = document.createElement('div');
-                    fullSection.className = 'section';
-                    
-                    const fullLabel = document.createElement('h4');
-                    fullLabel.textContent = 'Full Image';
-                    
-                    const fullImg = document.createElement('img');
-                    fullImg.src = `data:image/jpeg;base64,${sample.image}`;
-                    fullImg.alt = 'Full Image';
-                    
-                    fullSection.appendChild(fullLabel);
-                    fullSection.appendChild(fullImg);
-                    
                     // Assemble card
-                    body.appendChild(patchSection);
                     body.appendChild(fullSection);
+                    body.appendChild(patchSection);
                     
                     card.appendChild(header);
                     card.appendChild(body);
@@ -1641,7 +1650,6 @@ class MultiLayerAttributionAnalyzer:
         
         print(f"Visualization saved to {html_file}")
         print(f"Data saved to {js_file}")
-        print("Open the HTML file in a browser to view the visualization")
         
         return html_file
 
@@ -1788,10 +1796,9 @@ class MultiLayerAttributionAnalyzer:
             'top_activations': top_activations
         }
 
-
     def analyze_related_prototypes(self, dataloader, prototype_groups, layer_indices=[-1, -5, -10], 
-                             n_clusters=None, adaptive=True, max_clusters=5,
-                             clustering_method='hdbscan', visualize=True, max_samples=100):
+                            n_clusters=None, adaptive=True, max_clusters=5,
+                            clustering_method='hdbscan', visualize=True, max_samples=100):
         """
         Analyze potentially related prototypes by jointly clustering their circuits.
         
@@ -1805,9 +1812,10 @@ class MultiLayerAttributionAnalyzer:
             max_clusters: Maximum clusters to consider if adaptive
             clustering_method: Clustering algorithm to use
             visualize: Whether to visualize results
+            max_samples: Maximum number of samples to analyze
             
         Returns:
-            Dictionary of analysis results
+            Dictionary of analysis results in a format compatible with create_activation_patch_visualization
         """
         print(f"Analyzing {len(prototype_groups)} prototype groups")
         
@@ -1817,11 +1825,15 @@ class MultiLayerAttributionAnalyzer:
         sample_prototype_map = []  # Track which prototype each sample belongs to
         
         for group_idx, proto_group in enumerate(prototype_groups):
-            # Handle both single prototype and lists of prototypes
-            proto_indices = [proto_group] if isinstance(proto_group, int) else proto_group
-            
-            for proto_idx in proto_indices:
-                print(f"Finding top activing samples for {proto_idx}")
+            # Generate group name for prototype group (e.g., "3_22" for [3, 22])
+            if isinstance(proto_group, list):
+                group_name = "_".join(map(str, proto_group))
+            else:
+                group_name = str(proto_group)
+                proto_group = [proto_group]  # Normalize for consistent handling
+
+            for proto_idx in proto_group:
+                print(f"Finding top activating samples for {proto_idx} in {group_name}")
                 # Find top activating samples
                 pure_analyzer = PURE(self.model, device=self.device, num_ref_samples=max_samples)
                 samples, activations = pure_analyzer.find_top_activating_samples(dataloader, proto_idx)
@@ -1829,7 +1841,8 @@ class MultiLayerAttributionAnalyzer:
                 # Store samples and track which prototype they belong to
                 all_samples.append(samples)
                 all_activations.extend(activations)
-                sample_prototype_map.extend([(group_idx, proto_idx)] * len(samples))
+                sample_prototype_map.extend([(group_name, proto_idx)] * len(samples))
+
         
         # Combine all samples
         if not all_samples:
@@ -1866,8 +1879,7 @@ class MultiLayerAttributionAnalyzer:
         
         # Determine number of clusters if adaptive
         if adaptive and n_clusters is None:
-            # Implement similar logic to determine_optimal_clusters
-            # For now, use a simple approach based on silhouette score
+            # Use silhouette score approach
             from sklearn.metrics import silhouette_score
             
             # Choose an informative layer
@@ -1924,15 +1936,71 @@ class MultiLayerAttributionAnalyzer:
             distribution = {k: v/total for k, v in clusters.items()}
             prototype_cluster_distributions[proto_idx] = distribution
         
+        # Organize data by prototype for create_activation_patch_visualization compatibility
+        # For each prototype, we need to construct a result with:
+        # - samples: the images that activate this prototype
+        # - cluster_labels: the cluster assignments for these samples
+        # - top_activations: activation values for these samples
         
-        # Prepare results
-        results = {
+        reorganized_results = {}
+        
+        # Get unique prototype indices
+        unique_prototypes = set([p for _, p in sample_prototype_map])
+        
+        for proto_idx in unique_prototypes:
+            # Find all samples belonging to this prototype
+            proto_sample_indices = [i for i, (_, p) in enumerate(sample_prototype_map) if p == proto_idx]
+            
+            # Extract samples, labels, and activations for this prototype
+            proto_samples = combined_samples[proto_sample_indices]
+            proto_cluster_labels = cluster_labels[proto_sample_indices]
+            proto_activations = [all_activations[i] for i in proto_sample_indices]
+            
+            # Store in results dictionary
+            reorganized_results[proto_idx] = {
+                'samples': proto_samples,
+                'cluster_labels': proto_cluster_labels,
+                'top_activations': proto_activations,
+                'centroids': centroids,
+                'prototype_idx': proto_idx,
+                'is_polysemantic': len(np.unique(proto_cluster_labels)) > 1,
+                'n_clusters': len(np.unique(proto_cluster_labels))
+            }
+        
+        # Also include the original combined results for reference
+        combined_results = {
             "cluster_labels": cluster_labels,
             "centroids": centroids,
             "sample_prototype_map": sample_prototype_map,
             "prototype_cluster_distributions": prototype_cluster_distributions,
             "n_clusters": n_clusters,
-            "samples": combined_samples
+            "samples": combined_samples,
+            "all_activations": all_activations
         }
+        
+        # Add group-to-cluster naming mappings
+        group_to_named_clusters = {}
+        for group_name in set(item[0] for item in sample_prototype_map):
+            group_to_named_clusters[group_name] = {}
+            for cluster_idx in range(n_clusters):
+                named_cluster = f"{group_name}.{cluster_idx+1}"
+                group_to_named_clusters[group_name][cluster_idx] = named_cluster
+
+        # Update the results dictionary with the naming scheme
+        results = {
+            "cluster_labels": cluster_labels,
+            "centroids": centroids,
+            "sample_prototype_map": sample_prototype_map,
+            "group_to_named_clusters": group_to_named_clusters,
+            "n_clusters": n_clusters,
+            "samples": combined_samples,
+            "top_activations": all_activations
+        }
+        
+        # Visualize if requested
+        if visualize:
+            print("Visualizing prototype clusters...")
+            html_file = self.create_activation_patch_visualization(reorganized_results)
+            results["visualization_file"] = html_file
         
         return results
