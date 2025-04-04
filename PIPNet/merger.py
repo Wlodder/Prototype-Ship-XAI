@@ -72,7 +72,8 @@ def split_and_merge_prototypes(args=None):
     # prototype_indices  = prototype_indices + [[3,22]]
     random_samples = 0
 
-    prototype_indices  = [[3,22,102,103]]#, 135, 140]] 
+    # prototype_indices  = [[3,22,102,103]]#, 135, 140]] 
+    prototype_indices  = [[14]]#,32,15]]#, 135, 140]] 
     for i in range(random_samples):
         prototype_indices.append(list(np.random.choice(args.num_features, size=(5), replace=False)))
     # prototype_indices  = [[3,22]]
@@ -108,11 +109,11 @@ def split_and_merge_prototypes(args=None):
         for key, value in split_results.items():
             for x, item  in split_results[key]['centroids'].items():
                 print(item.size())
-                os.makedirs(f'{key}', exist_ok=True)
+                os.makedirs(f'pure_prototypes/{key}', exist_ok=True)
                 for grad_prototype in item:
-                    torch.save(grad_prototype, os.path.join(f"{key}/centroid_{key}_{x}.pt"))
+                    torch.save(grad_prototype, os.path.join(f"pure_prototypes/{key}/centroid_{key}_{x}.pt"))
                 
-        p2model = attribution.ForwardPURE(
+        p2model = attribution.EnhancedForwardPURE(
             net,
             device=device
         )
@@ -125,9 +126,14 @@ def split_and_merge_prototypes(args=None):
         xs1 = xs1.to(device)
         results = p2model.enhanced_classification(xs1)
 
-        for result in results.values():
-            print(result)
 
+        for centroid_match in results['centroid_matches']:
+            for match in centroid_match:
+                print(match)
+
+        # for centroid_match in results['matches']:
+        #     for match in centroid_match:
+        #         print(match)
 
     
     print("\nProcess completed successfully!")

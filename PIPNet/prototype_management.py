@@ -363,7 +363,7 @@ class PrototypeManager:
             results['_'.join(map(str,protogroup))] = analyzer.analyze_related_prototypes(
                 dataloader=dataloader,
                 prototype_groups=[protogroup],
-                layer_indices=[7,6,5,4,3],
+                layer_indices=[7,6,5,4,3,2,1],
                 adaptive=adaptive,
                 max_clusters=max_clusters,
                 clustering_method=algorithm,
@@ -375,6 +375,8 @@ class PrototypeManager:
                     5:1.1,
                     4:1.2,
                     3:0.6,
+                    2:0.0,
+                    1:0.0
                 }
             )
 
