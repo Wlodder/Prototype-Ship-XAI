@@ -8,6 +8,7 @@ from util.args import get_args, save_args, get_optimizer_nn
 from util.data import get_dataloaders
 import matplotlib.pyplot as plt
 import numpy as np
+from prototype_squared import attribution
 
 def split_and_merge_prototypes(args=None):
     """
@@ -69,9 +70,9 @@ def split_and_merge_prototypes(args=None):
         prototype_indices = args.prototype_indices if hasattr(args, 'prototype_indices') else [3, 29, 30]  # Example prototypes
     
     # prototype_indices  = prototype_indices + [[3,22]]
-    random_samples = 4
+    random_samples = 0
 
-    prototype_indices  = [[3,22,102,103, 135, 140]] 
+    prototype_indices  = [[3,22,102,103]]#, 135, 140]] 
     for i in range(random_samples):
         prototype_indices.append(list(np.random.choice(args.num_features, size=(5), replace=False)))
     # prototype_indices  = [[3,22]]
@@ -99,7 +100,35 @@ def split_and_merge_prototypes(args=None):
             visualize=args.visualize_results,
             algorithm=args.clustering_algorithm  # Use the specified clustering algorithm
         )
+
+        # We return the new cluster centroids, for each level and place the centroids into a new model
+        # Adatper that does the propagation in the backwards pass.
+
+        print(split_results.keys())
+        for key, value in split_results.items():
+            for x, item  in split_results[key]['centroids'].items():
+                print(item.size())
+                os.makedirs(f'{key}', exist_ok=True)
+                for grad_prototype in item:
+                    torch.save(grad_prototype, os.path.join(f"{key}/centroid_{key}_{x}.pt"))
+                
+        p2model = attribution.ForwardPURE(
+            net,
+            device=device
+        )
+
+        p2model.add_centroids(split_results)
         
+
+        # Testing against the new model for inference mode
+        xs1,  _ = next(iter(trainloader_normal))
+        xs1 = xs1.to(device)
+        results = p2model.enhanced_classification(xs1)
+
+        for result in results.values():
+            print(result)
+
+
     
     print("\nProcess completed successfully!")
 
