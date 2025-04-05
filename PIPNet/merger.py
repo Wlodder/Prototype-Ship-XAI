@@ -73,7 +73,7 @@ def split_and_merge_prototypes(args=None):
     random_samples = 0
 
     # prototype_indices  = [[3,22,102,103]]#, 135, 140]] 
-    prototype_indices  = [[14]]#,32,15]]#, 135, 140]] 
+    prototype_indices  = [[14,11,61]]#,32,15]]#, 135, 140]] 
     for i in range(random_samples):
         prototype_indices.append(list(np.random.choice(args.num_features, size=(5), replace=False)))
     # prototype_indices  = [[3,22]]
@@ -93,13 +93,20 @@ def split_and_merge_prototypes(args=None):
         #     algorithm=args.clustering_algorithm  # Use the specified clustering algorithm
         # )
 
+        layer_weights = { 7:0.5,
+                    6:1.0,
+                    5:1.1,
+                    4:1.2,
+                    3:0.6,
+                    2:0.0,
+                    1:0.0}
         split_results = prototype_manager.split_multiple_prototypes_multi_depth(
             trainloader_normal,
             prototype_indices,
-            n_clusters=args.n_clusters,
             adaptive=args.adaptive_clustering,
             visualize=args.visualize_results,
-            algorithm=args.clustering_algorithm  # Use the specified clustering algorithm
+            algorithm=args.clustering_algorithm,  # Use the specified clustering algorithm
+            layer_weights=layer_weights
         )
 
         # We return the new cluster centroids, for each level and place the centroids into a new model
@@ -115,7 +122,8 @@ def split_and_merge_prototypes(args=None):
                 
         p2model = attribution.EnhancedForwardPURE(
             net,
-            device=device
+            device=device,
+            layer_weights=layer_weights,
         )
 
         p2model.add_centroids(split_results)
