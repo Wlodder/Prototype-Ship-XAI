@@ -331,9 +331,9 @@ class PrototypeManager:
         plt.show()
 
 
-    def split_multiple_prototypes_multi_depth(self, dataloader, prototype_indices, n_clusters=None, 
-                                visualize=True, adaptive=True, max_clusters=5,
-                                algorithm='kmeans'):
+    def split_multiple_prototypes_multi_depth(self, dataloader, prototype_indices, 
+                                visualize=True, adaptive=False, max_clusters=10, layer_weights=None,
+                                algorithm='kmeans',output_path='.'):
         """
         Split multiple prototypes and return their results, supporting groups of prototypes.
         
@@ -364,24 +364,18 @@ class PrototypeManager:
                 dataloader=dataloader,
                 prototype_groups=[protogroup],
                 layer_indices=[7,6,5,4,3,2,1],
+                n_clusters=max_clusters,
                 adaptive=adaptive,
                 max_clusters=max_clusters,
                 clustering_method=algorithm,
                 visualize=visualize,
-                max_samples=100,
-                layer_weights={
-                    7:0.5,
-                    6:1.0,
-                    5:1.1,
-                    4:1.2,
-                    3:0.6,
-                    2:0.0,
-                    1:0.0
-                }
+                max_samples=200,
+                layer_weights=layer_weights,
+                output_path=output_path,
             )
 
-        if visualize:
-            html = analyzer.create_activation_patch_visualization(results, normalized_indices)
+        # if visualize:
+        #     html = analyzer.create_activation_patch_visualization(results, normalized_indices)
 
         return results
 

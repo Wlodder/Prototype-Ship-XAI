@@ -12,6 +12,33 @@ from util.vis_pipnet import get_img_coordinates, get_patch_size
 import math
 from PIL import Image
 
+
+def budget_loss(head: "CompetingHead",
+                lmb_budget: float = 1e-4) -> torch.Tensor:
+    """
+    L1 budget per head  (encourages sparsity).
+    Scales with lmb_budget.
+    """
+    return lmb_budget * head.weight.abs().sum(dim=2).mean()  # mean over (C, H)
+
+
+def sharing_loss(head: "CompetingHead",
+                 lmb_share: float = 1e-3,
+                 p: float = 2.0) -> torch.Tensor:
+    """
+    Penalise a prototype being used by ≥2 heads of the *same* class.
+
+    For class c and prototype d:
+        overlap = sum_h |w_chd|
+        penalty  = (overlap ** p)
+
+    * p=2   → quadratic, smooth
+    * lmb_share  controls strength
+    """
+    w = head.weight.abs()                       # (C, H, D)
+    overlap = w.sum(dim=1)                      # (C, D)
+    return lmb_share * (overlap ** p).mean()    # mean over (C, D)
+
 def train_pipnet(net, train_loader, optimizer_net, optimizer_classifier, scheduler_net, scheduler_classifier, criterion, epoch, nr_epochs, device, pretrain=False, finetune=False, progress_prefix: str = 'Train Epoch'):
 
     # Make sure the model is in train mode
@@ -45,16 +72,15 @@ def train_pipnet(net, train_loader, optimizer_net, optimizer_classifier, schedul
     print("Number of parameters that require gradient: ", count_param, flush=True)
 
     if pretrain:
-        align_pf_weight = (epoch/nr_epochs)*1.
+        align_pf_weight = (epoch/nr_epochs)*1
         unif_weight = 0.5 #ignored
         t_weight = 5.
         cl_weight = 0.
     else:
-        align_pf_weight = 5. 
-        t_weight = 2.
+        align_pf_weight = 3. 
+        t_weight = 3.
         unif_weight = 0.
         cl_weight = 2.
-
     
     print("Align weight: ", align_pf_weight, ", U_tanh weight: ", t_weight, "Class weight:", cl_weight, flush=True)
     print("Pretrain?", pretrain, "Finetune?", finetune, flush=True)
@@ -76,6 +102,12 @@ def train_pipnet(net, train_loader, optimizer_net, optimizer_classifier, schedul
                                    unif_weight, cl_weight, net.module._classification.normalization_multiplier, 
                                    pretrain, finetune, criterion, train_iter, print=True, EPS=1e-8)
         
+        head = net.module._classification
+        budget_weight=1e-4
+        share_weight=1e-3
+        budget_l = budget_loss(head, budget_weight)
+        share_l = sharing_loss(head, share_weight, p=2.0)
+        loss = loss + budget_l + share_l
         # Compute the gradient
         loss.backward()
 
@@ -98,9 +130,14 @@ def train_pipnet(net, train_loader, optimizer_net, optimizer_classifier, schedul
         if not pretrain:
             with torch.no_grad():
                 net.module._classification.weight.copy_(torch.clamp(net.module._classification.weight.data - 1e-3, min=0.)) #set weights in classification layer < 1e-3 to zero
-                net.module._classification.normalization_multiplier.copy_(torch.clamp(net.module._classification.normalization_multiplier.data, min=1.0)) 
-                if net.module._classification.bias is not None:
-                    net.module._classification.bias.copy_(torch.clamp(net.module._classification.bias.data, min=0.))  
+                # net.module._classification.normalization_multiplier.copy_(torch.clamp(net.module._classification.normalization_multiplier.data, min=1.0)) 
+                # if net.module._classification.bias is not None:
+                #     net.module._classification.bias.copy_(torch.clamp(net.module._classification.bias.data, min=0.))  
+                # head.normalization_multiplier = min(head.normalization_multipier, 1.0)
+
+                # if head.bias is not None:
+                #     head.bias = min(head.bias,0.0)
+
     train_info['train_accuracy'] = total_acc/float(i+1)
     train_info['loss'] = total_loss/float(i+1)
     train_info['lrs_net'] = lrs_net
@@ -151,7 +188,7 @@ def train_pipnet_cutmix(net, train_loader, optimizer_net, optimizer_classifier, 
         cl_weight = 0.
     else:
         align_pf_weight = 5. 
-        t_weight = 7.
+        t_weight = 2.
         unif_weight = 0.
         cl_weight = 2.
 
@@ -201,7 +238,6 @@ def train_pipnet_cutmix(net, train_loader, optimizer_net, optimizer_classifier, 
                             max_idx_h = max_idx_h[max_idx_w].item()
                             max_idx_w = max_idx_w.item()
 
-                            print(max_idx_h, max_idx_w)
 
                             # We are cut mixing
                             prototype_image_path_dir  = os.path.join(proto_dir,f'prototype_{prototype_idx.item()}')

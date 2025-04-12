@@ -162,6 +162,15 @@ def run_prototype_analysis(prototype_indices, n_clusters=None, adaptive=True, ma
             normalized_indices.append(proto)
     
     results = {}
+    global_state['layer_weights'] = {
+        7: 0.5,
+        6: 1.0,
+        5: 1.1,
+        4: 1.2,
+        3: 0.6,
+    }
+
+    layer_weights = global_state['layer_weights']
     
     # Analyze each prototype or prototype group
     for protogroup in normalized_indices:
@@ -174,16 +183,11 @@ def run_prototype_analysis(prototype_indices, n_clusters=None, adaptive=True, ma
             clustering_method=algorithm,
             visualize=True,
             max_samples=100,
-            layer_weights={
-                7: 0.5,
-                6: 1.0,
-                5: 1.1,
-                4: 1.2,
-                3: 0.6,
-            }
+            layer_weights=layer_weights
         )
     
     # Store results in global state
+    print("Storing analysis results...")
     global_state['split_results'].update(results)
     
     # Compute UMAP embeddings for the first prototype group
@@ -206,7 +210,9 @@ def compute_umap_embeddings(proto_key, results=None):
     
     # Compute embeddings for each layer
     embeddings = {}
+    print(f"Computing UMAP for prototype group {proto_key} with {len(circuits.items())} samples")
     for layer_idx, layer_circuits in circuits.items():
+        print(f"Computing UMAP for layer {layer_idx} with {layer_circuits.shape[0]} samples")
         # Reshape for UMAP
         flat_circuits = layer_circuits.reshape(layer_circuits.shape[0], -1).numpy()
         
@@ -227,6 +233,7 @@ def compute_umap_embeddings(proto_key, results=None):
     
     # Store in global state
     global_state['umap_embeddings'][proto_key] = embeddings
+    print(f"UMAP embeddings computed for {proto_key}")
     
     return embeddings
 
@@ -271,7 +278,8 @@ def run_custom_prototype_pass(proto_key, sample_indices=None):
     device = global_state['device']
     
     # Create ForwardPURE model
-    pure_model = attribution.ForwardPURE(model, device=device)
+    layer_weights = global_state['layer_weights']
+    pure_model = attribution.EnhancedForwardPURE(model, device=device, layer_weights=layer_weights)
     
     # Add centroids from analysis results
     if proto_key in global_state['split_results']:
@@ -390,8 +398,9 @@ def get_prototype_samples(prototype_id):
         return jsonify({"error": "No model loaded"})
     
     try:
-        prototype_manager = global_state['prototype_manager']
-        top_samples, top_activations = prototype_manager.find_top_activating_samples(
+        # prototype_manager = global_state['prototype_manager']
+        pure_analyzer = global_state['analyzer']
+        top_samples, top_activations, top_activated_samples = pure_analyzer.find_top_activating_samples(
             global_state['trainloader_normal'], prototype_id, num_samples=10)
         
         # Convert to base64 images
@@ -400,7 +409,7 @@ def get_prototype_samples(prototype_id):
         return jsonify({
             "prototype_id": prototype_id,
             "samples": sample_images,
-            "activations": [float(act) for act in top_activations]
+            "activations": [float(act) for act in top_activated_samples]
         })
     except Exception as e:
         return jsonify({"error": f"Error getting samples: {str(e)}"})
@@ -448,10 +457,12 @@ def analyze_prototypes():
 def get_umap_data(proto_key, layer_idx):
     """Get UMAP embedding data for visualization."""
     if proto_key not in global_state['umap_embeddings']:
+        print(f"UMAP data not found for {proto_key}")
         return jsonify({"error": "No UMAP data for this prototype"})
     
     embeddings = global_state['umap_embeddings'][proto_key]
     if layer_idx not in embeddings:
+        print(f"UMAP data not found for {layer_idx}")
         return jsonify({"error": "No UMAP data for this layer"})
     
     embedding = embeddings[layer_idx]
@@ -557,4 +568,4 @@ def export_clusters(proto_key):
     return send_file(export_path, as_attachment=True)
 
 if __name__ == '__main__':
-    app.run(debug=False, host='0.0.0.0', port=2000)#, threaded=True)
+    app.run(debug=False, host='0.0.0.0', port=2000, threaded=False)

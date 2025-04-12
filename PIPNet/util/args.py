@@ -160,6 +160,9 @@ def get_args(parser=None) -> argparse.Namespace:
     parser.add_argument('--memory_size',
                         type=int,
                         help='Size of the memory buffer')
+    parser.add_argument('--dropout',
+                        type=float,
+                        help='amount of prototype dropout')
 
     args = parser.parse_args()
     if len(args.log_dir.split('/'))>2:

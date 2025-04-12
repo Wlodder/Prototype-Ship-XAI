@@ -6,6 +6,7 @@ import torch
 import torch.nn.functional as F
 import torch.utils.data
 import os
+import cv2
 from PIL import Image, ImageDraw as D
 import torchvision.transforms as transforms
 import torchvision
@@ -167,6 +168,7 @@ def prototype_buffer_update(net, projectloader, num_classes, device, foldername,
 
 @torch.no_grad()                    
 def visualize_topk(net, projectloader, num_classes, device, foldername, args: argparse.Namespace, k=10):
+    # We are ignoreing weights
     print("Visualizing prototypes for topk...", flush=True)
     dir = os.path.join(args.log_dir, foldername)
     if not os.path.exists(dir):
@@ -216,7 +218,10 @@ def visualize_topk(net, projectloader, num_classes, device, foldername, args: ar
             pfs = pfs.squeeze(0) 
             
             for p in range(pooled.shape[0]):
-                c_weight = torch.max(classification_weights[:,p]) 
+                c_weight = classification_weights[:, :, p].abs().max()
+
+                # If using norml
+                # c_weight = torch.max(classification_weights[:,p]) 
                 if c_weight > 1e-3:#ignore prototypes that are not relevant to any class
                     if p not in topks.keys():
                         topks[p] = []
@@ -271,7 +276,9 @@ def visualize_topk(net, projectloader, num_classes, device, foldername, args: ar
                             max_per_prototype_h, max_idx_per_prototype_h = torch.max(max_per_prototype, dim=1)
                             max_per_prototype_w, max_idx_per_prototype_w = torch.max(max_per_prototype_h, dim=1) #shape (num_prototypes)
                             
-                            c_weight = torch.max(classification_weights[:,p]) #ignore prototypes that are not relevant to any class
+                            c_weight = classification_weights[:, :, p].abs().max()
+                            # For non head use this
+                            # c_weight = torch.max(classification_weights[:,p]) #ignore prototypes that are not relevant to any class
                             if (c_weight > 1e-10) or ('pretrain' in foldername):
                                 
                                 h_idx = max_idx_per_prototype_h[p, max_idx_per_prototype_w[p]]
@@ -615,6 +622,8 @@ def visualize_prototypes(net, projectloader, num_classes, device, foldername, ar
                 # image.save(os.path.join(save_path, 'p%s_%s_%s_%s_rect.png'%(str(p),str(imglabel),str(round(found_max, 2)),str(img_to_open.split('/')[-1].split('.jpg')[0]))))
 
                 # Create a set of highly activated prototypes to select from 
+                if len(tensors_per_prototype[p]) < 100:
+                    tensors_per_prototype[p].append(img_tensor_patch)
                 
                 torchvision.utils.save_image(img_tensor_patch, os.path.join(save_path,f'p%s_%s_%s_%s_patch.png'%(str(p),
                                                                                                                 str(imglabel),
@@ -674,7 +683,7 @@ def visualize_prototype(net, projectloader, num_classes, device, foldername, arg
     else:
         skip_img = 2
 
-    skip_img = 10
+    # skip_img = 2
     print("Every", skip_img, "is skipped in order to speed up the visualisation process", flush=True)
 
     # Make sure the model is in evaluation mode

@@ -12,6 +12,34 @@ import os
 from PIL import Image
 from torch import Tensor
 
+
+# heads.py  –– new file
+import torch
+import torch.nn as nn
+
+
+class CompetingHead(nn.Module):
+    """
+    One weight matrix per hypothesis; best hypothesis wins (max‑pool).
+    weight : (C, H, D)   C = classes, H = hypotheses, D = prototypes
+    """
+    def __init__(self, num_classes: int,
+                 num_prototypes: int,
+                 num_hypotheses: int = 3,
+                 normalization_multiplier: float = 1.0):
+        super().__init__()
+        self.weight = nn.Parameter(
+            0.01 * torch.randn(num_classes, num_hypotheses, num_prototypes))
+        self.normalization_multiplier = normalization_multiplier
+        self._num_hyp = num_hypotheses
+
+    def forward(self, pooled):                  # pooled : (B, D)
+        # logits  (B, C, H)
+        logits = torch.einsum('bd,chd->bch', pooled, self.weight)
+        logits, _ = logits.max(dim=2)           # max over hypotheses
+        return logits * self.normalization_multiplier
+
+
 class PIPNet(nn.Module):
     def __init__(self,
                  num_classes: int,
@@ -20,7 +48,8 @@ class PIPNet(nn.Module):
                  args: argparse.Namespace,
                  add_on_layers: nn.Module,
                  pool_layer: nn.Module,
-                 classification_layer: nn.Module
+                 classification_layer: nn.Module,
+                 dropout: float = 0.7,
                  ):
         super().__init__()
         assert num_classes > 0
@@ -30,11 +59,15 @@ class PIPNet(nn.Module):
         self._net = feature_net
         self._add_on = add_on_layers
         self._pool = pool_layer
-        self._classification = classification_layer
+        # old classifcation 
+        # self._classification = classification_layer
         self._multiplier = classification_layer.normalization_multiplier
+        self._num_hypotheses = 4
+        self._classification = CompetingHead(num_classes, num_prototypes, num_hypotheses=self._num_hypotheses)
 
     def forward(self, xs,  inference=False, features_save=False):
         features = self._net(xs) 
+        
         proto_features = self._add_on(features)
         pooled = self._pool(proto_features)
         if inference:

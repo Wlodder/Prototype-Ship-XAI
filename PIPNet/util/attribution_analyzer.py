@@ -100,7 +100,7 @@ class MultiLayerAttributionAnalyzer:
         self.layer_names.append('add_on')
         self.layer_modules.append(self.model.module._add_on)
         
-        print(f"Indexed {len(self.layer_names)} layers for attribution analysis")
+        print(f"Indexed {len(self.layer_names)} layers for attribution analysis: {self.layer_names}")
     
     def compute_layer_attributions(self, x, prototype_idx, layer_indices=None):
         """
@@ -301,6 +301,7 @@ class MultiLayerAttributionAnalyzer:
             
             kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
             cluster_labels = kmeans.fit_predict(combined_features_np)
+            overall_centroids = torch.from_numpy(kmeans.cluster_centers_)
             
             # Compute centroids for each layer
             centroids = {}
@@ -360,64 +361,46 @@ class MultiLayerAttributionAnalyzer:
                         layer_centroids[i] = np.mean(layer_circuits[cluster_mask], axis=0)
                 
                 centroids[layer_idx] = torch.tensor(layer_centroids)
-        
-        elif method == 'spectral':
-            from sklearn.cluster import SpectralClustering
+        elif method == 'hdbscan_kmeans':
+            # Implemented hybrid approach here
+            import hdbscan
             
-            # Spectral clustering
-            clustering = SpectralClustering(
-                n_clusters=n_clusters,
-                assign_labels='kmeans',
-                random_state=42,
-                affinity='nearest_neighbors',
-                n_neighbors=min(10, n_samples-1)
-            )
+            # Run HDBSCAN first to get initial clusters
+            clustering = hdbscan.HDBSCAN(min_cluster_size=max(5, n_samples//10),
+                                        min_samples=3,
+                                        prediction_data=True)
+            hdbscan_labels = clustering.fit_predict(combined_features_np)
             
-            cluster_labels = clustering.fit_predict(combined_features_np)
-            
-            # Compute centroids for each layer
-            centroids = {}
-            for layer_idx in circuits:
-                layer_circuits = circuits[layer_idx].numpy()
-                layer_centroids = np.zeros((n_clusters,) + layer_circuits.shape[1:])
+            # Handle noise points
+            if -1 in hdbscan_labels:
+                # Assign noise points to nearest cluster
+                noise_indices = np.where(hdbscan_labels == -1)[0]
+                valid_indices = np.where(hdbscan_labels != -1)[0]
                 
-                for c in range(n_clusters):
-                    cluster_mask = cluster_labels == c
-                    if np.any(cluster_mask):
-                        layer_centroids[c] = np.mean(layer_circuits[cluster_mask], axis=0)
-                
-                centroids[layer_idx] = torch.tensor(layer_centroids)
-        
-        elif method == 'bgmm':
-            from sklearn.mixture import BayesianGaussianMixture
+                if len(valid_indices) > 0:
+                    # Assign to nearest non-noise cluster
+                    for idx in noise_indices:
+                        distances = np.linalg.norm(combined_features_np[idx] - combined_features_np[valid_indices], axis=1)
+                        nearest_idx = valid_indices[np.argmin(distances)]
+                        hdbscan_labels[idx] = hdbscan_labels[nearest_idx]
+                else:
+                    # If all points are noise, create a single cluster
+                    hdbscan_labels = np.zeros_like(hdbscan_labels)
             
-            # Bayesian Gaussian Mixture Model
-            bgmm = BayesianGaussianMixture(
-                n_components=n_clusters,
-                random_state=42,
-                max_iter=300,
-                n_init=3
-            )
+            # Get number of clusters and calculate centroids
+            unique_clusters = np.unique(hdbscan_labels)
+            n_clusters = len(unique_clusters)
             
-            cluster_labels = bgmm.fit_predict(combined_features_np)
-            
-            # Compute centroids for each layer
-            centroids = {}
-            for layer_idx in circuits:
-                layer_circuits = circuits[layer_idx].numpy()
-                layer_centroids = np.zeros((n_clusters,) + layer_circuits.shape[1:])
-                
-                for c in range(n_clusters):
-                    cluster_mask = cluster_labels == c
-                    if np.any(cluster_mask):
-                        layer_centroids[c] = np.mean(layer_circuits[cluster_mask], axis=0)
-                
-                centroids[layer_idx] = torch.tensor(layer_centroids)
-        
+            # Now use K-means with the determined number of clusters
+            from sklearn.cluster import KMeans
+            kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
+            cluster_labels = kmeans.fit_predict(combined_features_np)
+            centroids = kmeans.cluster_centers_
+            overall_centroids = torch.from_numpy(kmeans.cluster_centers_)
         else:
             raise ValueError(f"Unknown clustering method: {method}")
         
-        return cluster_labels, centroids
+        return cluster_labels, centroids, overall_centroids
     
     def visualize_multi_layer_umap(self, circuits, cluster_labels, prototype_idx, 
                                  layer_indices=None, layer_names=None):
@@ -1823,7 +1806,7 @@ class MultiLayerAttributionAnalyzer:
     def analyze_related_prototypes(self, dataloader, prototype_groups, layer_indices=[-1, -5, -10], 
                             n_clusters=None, adaptive=True, max_clusters=5,
                             clustering_method='hdbscan', visualize=True, max_samples=100,
-                            layer_weights=None):
+                            layer_weights=None, output_path='.'):
         """
         Analyze potentially related prototypes by jointly clustering their circuits.
         
@@ -1883,6 +1866,7 @@ class MultiLayerAttributionAnalyzer:
         # Compute multi-layer attributions for all samples
         combined_circuits = {}
         
+        
         for i, sample in enumerate(combined_samples):
             # Add batch dimension
             sample_batch = sample.unsqueeze(0)
@@ -1903,6 +1887,7 @@ class MultiLayerAttributionAnalyzer:
                 combined_circuits[layer_idx].append(attribution.detach().cpu())
         
         # Stack attributions for each layer
+        print("Finished computing attributions")
         for layer_idx in combined_circuits:
             combined_circuits[layer_idx] = torch.stack(combined_circuits[layer_idx])
         
@@ -1912,7 +1897,8 @@ class MultiLayerAttributionAnalyzer:
             from sklearn.metrics import silhouette_score
             
             # Choose an informative layer
-            informative_layer = max(combined_circuits.keys())
+            # informative_layer = combined_circuits.keys()
+            informative_layer = 5
             layer_circuits = combined_circuits[informative_layer]
             flat_circuits = layer_circuits.reshape(layer_circuits.shape[0], -1).numpy()
             
@@ -1937,10 +1923,10 @@ class MultiLayerAttributionAnalyzer:
                         best_n_clusters = k
             
             n_clusters = best_n_clusters
-            print(f"Determined optimal number of clusters: {n_clusters}")
+            print(f"Determined optimal number of clusters: {n_clusters} with score {best_score:.3f}")
         
         # Cluster the combined circuits
-        cluster_labels, centroids = self.cluster_multi_layer_circuits(
+        cluster_labels, centroids, overall_centroids = self.cluster_multi_layer_circuits(
             combined_circuits, n_clusters, method=clustering_method, layer_weights=layer_weights
         )
         
@@ -1976,25 +1962,6 @@ class MultiLayerAttributionAnalyzer:
         # Get unique prototype indices
         unique_prototypes = set([p for _, p in sample_prototype_map])
         
-        for proto_idx in unique_prototypes:
-            # Find all samples belonging to this prototype
-            proto_sample_indices = [i for i, (_, p) in enumerate(sample_prototype_map) if p == proto_idx]
-            
-            # Extract samples, labels, and activations for this prototype
-            proto_samples = combined_samples[proto_sample_indices]
-            proto_cluster_labels = cluster_labels[proto_sample_indices]
-            proto_activations = [all_activations[i] for i in proto_sample_indices]
-            
-            # Store in results dictionary
-            reorganized_results[proto_idx] = {
-                'samples': proto_samples,
-                'cluster_labels': proto_cluster_labels,
-                'top_activations': proto_activations,
-                'centroids': centroids,
-                'prototype_idx': proto_idx,
-                'is_polysemantic': len(np.unique(proto_cluster_labels)) > 1,
-                'n_clusters': len(np.unique(proto_cluster_labels))
-            }
         
         
         # Add group-to-cluster naming mappings
@@ -2005,16 +1972,6 @@ class MultiLayerAttributionAnalyzer:
                 named_cluster = f"{group_name}.{cluster_idx+1}"
                 group_to_named_clusters[group_name][cluster_idx] = named_cluster
 
-        # Update the results dictionary with the naming scheme
-        results = {
-            "cluster_labels": cluster_labels,
-            "centroids": centroids,
-            "sample_prototype_map": sample_prototype_map,
-            "group_to_named_clusters": group_to_named_clusters,
-            "n_clusters": n_clusters,
-            "samples": combined_samples,
-            "top_activations": all_activations
-        }
 
         # Also include the original combined results for reference
         combined_results = {
@@ -2024,14 +1981,828 @@ class MultiLayerAttributionAnalyzer:
             "group_to_named_clusters": group_to_named_clusters,
             "n_clusters": n_clusters,
             "samples": combined_samples,
-            "all_activations": all_activations
+            "all_activations": all_activations,
+            "circuits": combined_circuits,
+            "overall_centroids": overall_centroids
         }
         
         # Visualize if requested
         if visualize:
             print("Visualizing prototype clusters...")
-            figures = self.visualize_multi_layer_umap_with_gallery(combined_circuits, cluster_labels, prototype_groups, combined_act_samples)
+            path = '/media/wlodder/Data/XAI/proto_results/convnext_tiny_26_3_30_200_8_8_256/trial_5_2/15_6_main/log/visualised_prototypes_represent'
+            figures = self.visualize_multi_layer_umap_with_gallery_2(combined_circuits, cluster_labels, prototype_groups,
+                                                                      combined_act_samples, prototype_patches_dir=path,
+                                                                      output_path=output_path)
+
+            # create_interactive_umap_server(circuits=combined_circuits, cluster_labels=cluster_labels, samples=combined_act_samples, prototype_idx=prototype_groups)
             # html_file = self.create_activation_patch_visualization(reorganized_results)
             # combined_results["visualization_file"] = html_file
         
         return combined_results
+
+    def visualize_multi_layer_umap_with_gallery_2(self, circuits, cluster_labels, prototype_idx, 
+                                                samples, layer_indices=None, layer_names=None,
+                                                max_display_images=12, prototype_patches_dir=None,
+                                                additional_samples=None, output_path='.'):
+            """
+            Create interactive UMAP visualizations with synchronized image gallery display and prototype patch explorer.
+            When points are selected in the scatter plot, corresponding images appear in the gallery.
+            Users can also browse and select prototype patches in a side panel.
+            
+            Args:
+                circuits: Dictionary of circuit attributions
+                cluster_labels: Cluster assignment for each sample
+                prototype_idx: Index of the prototype being analyzed
+                samples: Original input samples for generating previews
+                layer_indices: Specific layer indices to visualize (defaults to all)
+                layer_names: Optional dictionary of {layer_idx: display_name} for labels
+                max_display_images: Maximum number of images to display in the gallery
+                prototype_patches_dir: Base directory containing folders of prototype patches
+                                    Format: prototype_patches_dir/prototype_{idx}/patch_{n}.jpg
+                additional_samples: Optional dictionary of additional samples to allow selection
+                                Format: {sample_id: tensor_image}
+                
+            Returns:
+                Dictionary of HTML files with interactive visualizations
+            """
+            import plotly.graph_objects as go
+            from plotly.subplots import make_subplots
+            import umap
+            from sklearn.preprocessing import StandardScaler
+            import numpy as np
+            import base64
+            from io import BytesIO
+            from PIL import Image
+            import os
+            import math
+            import glob
+            import matplotlib.pyplot as plt
+            
+            # Determine which layers to visualize
+            if layer_indices is None:
+                layer_indices = sorted(circuits.keys())
+            else:
+                layer_indices = [idx for idx in layer_indices if idx in circuits]
+            
+            if not layer_indices:
+                print("No valid layers to visualize")
+                return {}
+            
+            # Use default names if not provided
+            if layer_names is None:
+                if hasattr(self, 'layer_names'):
+                    layer_names = {idx: name for idx, name in enumerate(self.layer_names) 
+                                if idx in layer_indices}
+                else:
+                    layer_names = {idx: f"Layer {idx}" for idx in layer_indices}
+            
+            # Define a function to convert tensor to base64 image for embedding
+            def tensor_to_base64_img(tensor, size=150):
+                # Denormalize and convert to PIL image
+                img = tensor.cpu().permute(1, 2, 0).numpy()
+                img = (img - img.min()) / (img.max() - img.min() + 1e-8)
+                img = (img * 255).astype(np.uint8)
+                pil_img = Image.fromarray(img)
+                
+                # Resize if needed
+                if size:
+                    pil_img = pil_img.resize((size, size), Image.LANCZOS)
+                
+                # Convert to base64
+                buffered = BytesIO()
+                pil_img.save(buffered, format="JPEG", quality=80)
+                img_str = base64.b64encode(buffered.getvalue()).decode()
+                return f"data:image/jpeg;base64,{img_str}"
+            
+            # Function to convert file path to base64 image
+            def file_to_base64_img(file_path, size=150):
+                try:
+                    pil_img = Image.open(file_path)
+                    
+                    # Resize if needed
+                    if size:
+                        pil_img = pil_img.resize((size, size), Image.LANCZOS)
+                    
+                    # Convert to base64
+                    buffered = BytesIO()
+                    pil_img.save(buffered, format="JPEG", quality=80)
+                    img_str = base64.b64encode(buffered.getvalue()).decode()
+                    return f"data:image/jpeg;base64,{img_str}"
+                except Exception as e:
+                    print(f"Error processing image {file_path}: {e}")
+                    return None
+            
+                        # Get prototype patches if directory is provided
+            prototype_patches = []
+            prototype_folders = []
+            all_prototype_patches = {}  # Dictionary to store patches for multiple prototypes
+            
+            if prototype_patches_dir:
+                # Get all prototype folders
+                prototype_folders = sorted(glob.glob(os.path.join(prototype_patches_dir, "prototype_*")))
+                
+                # Get info about available prototypes for the selector
+                available_prototypes = []
+                for folder in prototype_folders:
+                    proto_id = os.path.basename(folder).replace("prototype_", "")
+                    try:
+                        proto_id = int(proto_id)
+                        available_prototypes.append(proto_id)
+                    except ValueError:
+                        continue
+                
+                # Process patches for each prototype
+                # Limit to current prototype + a few others to avoid making the HTML too large
+                prototypes_to_include = [prototype_idx]  # Always include the current prototype
+                
+                # Process each prototype's patches
+                for proto_id in prototypes_to_include:
+                    proto_folder = os.path.join(prototype_patches_dir, f"prototype_{proto_id}")
+                    if not os.path.exists(proto_folder):
+                        continue
+                    
+                    # Get all image files for this prototype
+                    patch_files = sorted(glob.glob(os.path.join(proto_folder, "*.jpg")) + 
+                                    glob.glob(os.path.join(proto_folder, "*.png")) +
+                                    glob.glob(os.path.join(proto_folder, "*.jpeg")))
+                    
+                    proto_patches = []
+                    # Convert to base64 for embedding
+                    for file_path in patch_files:
+                        base64_img = file_to_base64_img(file_path)
+                        if base64_img:
+                            patch_name = os.path.basename(file_path)
+                            patch_data = {
+                                "name": patch_name,
+                                "path": file_path,
+                                "image": base64_img
+                            }
+                            
+                            # Add to the prototype-specific list
+                            proto_patches.append(patch_data)
+                            
+                            # Also add to the current prototype's list if it matches
+                            if proto_id == prototype_idx:
+                                prototype_patches.append(patch_data)
+                    
+                    # Store the patches for this prototype
+                    all_prototype_patches[proto_id] = proto_patches
+            
+            # Process additional samples if provided
+            additional_images = {}
+            if additional_samples:
+                for sample_id, tensor in additional_samples.items():
+                    additional_images[sample_id] = tensor_to_base64_img(tensor)
+            
+            # Get number of clusters for color mapping
+            unique_clusters = np.unique(cluster_labels)
+            
+            # Create color mapping
+            colors = [f'rgb({int(r*255)},{int(g*255)},{int(b*255)})' 
+                    for r, g, b, _ in plt.cm.rainbow(np.linspace(0, 1, len(unique_clusters)))]
+            
+            results = {}
+            
+            # For each layer, create a complete dashboard
+            for layer_idx in layer_indices:
+                # Get layer attributions
+                layer_circuits = circuits[layer_idx]
+                
+                # Reshape for UMAP
+                flat_circuits = layer_circuits.reshape(layer_circuits.shape[0], -1).numpy()
+                
+                # Standardize data
+                scaler = StandardScaler()
+                scaled_data = scaler.fit_transform(flat_circuits)
+                
+                # Apply UMAP dimensionality reduction
+                reducer = umap.UMAP(
+                    n_components=2,
+                    min_dist=0.1,
+                    n_neighbors=min(15, len(flat_circuits)-1),
+                    random_state=42
+                )
+                
+                # Compute embedding
+                embedding = reducer.fit_transform(scaled_data)
+                
+                # Create a UMAP scatter plot figure
+                fig_scatter = go.Figure()
+                
+                # Process each cluster
+                sample_indices_by_cluster = {}
+                images_by_cluster = {}
+                
+                for j, cluster in enumerate(unique_clusters):
+                    mask = cluster_labels == cluster
+                    cluster_indices = np.where(mask)[0]
+                    sample_indices_by_cluster[j] = cluster_indices.tolist()
+                    
+                    # Store images for this cluster (for gallery display)
+                    images_by_cluster[j] = [tensor_to_base64_img(samples[idx]) for idx in cluster_indices]
+                    
+                    # Add scatter trace
+                    fig_scatter.add_trace(go.Scatter(
+                        x=embedding[mask, 0],
+                        y=embedding[mask, 1],
+                        mode='markers',
+                        marker=dict(
+                            color=colors[j],
+                            size=10,
+                            opacity=0.8
+                        ),
+                        name=f'Cluster {j+1}',
+                        customdata=list(zip(cluster_indices, [j] * len(cluster_indices))),
+                        hovertemplate="Sample: %{customdata[0]}<br>Cluster: %{customdata[1] + 1}<extra></extra>"
+                    ))
+                
+                # Update layout
+                layer_name = layer_names.get(layer_idx, f"Layer {layer_idx}")
+                fig_scatter.update_layout(
+                    title=f"{layer_name} Attributions for Prototype {prototype_idx}",
+                    xaxis_title="UMAP Dimension 1",
+                    yaxis_title="UMAP Dimension 2",
+                    legend_title="Clusters",
+                    height=500,
+                    width=800,
+                    hovermode='closest',
+                    clickmode='event+select'
+                )
+                
+                # Generate HTML for the dashboard with embedded JavaScript for interactivity
+                html = f"""
+                <!DOCTYPE html>
+                <html>
+                <head>
+                    <title>Interactive UMAP Visualization - Prototype {prototype_idx}, Layer {layer_idx}</title>
+                    <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+                    <style>
+                        body {{ font-family: Arial, sans-serif; margin: 20px; }}
+                        .main-container {{ 
+                            display: flex; 
+                            flex-direction: row;
+                            gap: 20px;
+                        }}
+                        .left-panel {{ 
+                            flex: 7;
+                            display: flex;
+                            flex-direction: column;
+                        }}
+                        .right-panel {{ 
+                            flex: 3;
+                            display: flex;
+                            flex-direction: column;
+                            border-left: 1px solid #ddd;
+                            padding-left: 20px;
+                        }}
+                        .plot-container {{ width: 100%; }}
+                        .gallery-container {{ 
+                            margin-top: 20px;
+                            display: flex;
+                            flex-wrap: wrap;
+                            gap: 10px;
+                        }}
+                        .cluster-selector {{
+                            margin: 20px 0;
+                            display: flex;
+                            flex-wrap: wrap;
+                            gap: 10px;
+                        }}
+                        .cluster-btn {{
+                            padding: 8px 15px;
+                            cursor: pointer;
+                            border: none;
+                            border-radius: 4px;
+                        }}
+                        .gallery-image {{
+                            width: 150px;
+                            height: 150px;
+                            object-fit: cover;
+                            border-radius: 4px;
+                            transition: transform 0.2s;
+                        }}
+                        .gallery-image:hover {{
+                            transform: scale(1.05);
+                            box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+                        }}
+                        .image-container {{
+                            position: relative;
+                            display: inline-block;
+                        }}
+                        .image-label {{
+                            position: absolute;
+                            bottom: 0;
+                            left: 0;
+                            background: rgba(0,0,0,0.7);
+                            color: white;
+                            padding: 2px 6px;
+                            font-size: 12px;
+                            border-radius: 0 0 4px 4px;
+                        }}
+                        .prototype-selector {{
+                            margin: 20px 0;
+                        }}
+                        .prototype-patches {{
+                            margin-top: 10px;
+                            display: flex;
+                            flex-wrap: wrap;
+                            gap: 10px;
+                            max-height: 500px;
+                            overflow-y: auto;
+                        }}
+                        .load-more {{
+                            margin-top: 15px;
+                            padding: 10px;
+                            background-color: #4CAF50;
+                            color: white;
+                            border: none;
+                            border-radius: 4px;
+                            cursor: pointer;
+                        }}
+                        .load-more:hover {{
+                            background-color: #45a049;
+                        }}
+                        .additional-selector {{
+                            margin-top: 20px;
+                        }}
+                        select {{
+                            padding: 8px;
+                            border-radius: 4px;
+                            border: 1px solid #ddd;
+                            margin-right: 10px;
+                        }}
+                        .selected {{
+                            border: 3px solid #ff9800 !important;
+                        }}
+                        h2, h3 {{ margin-bottom: 10px; }}
+                        .control-row {{
+                            display: flex;
+                            align-items: center;
+                            margin-bottom: 15px;
+                        }}
+                        button {{
+                            padding: 8px 15px;
+                            cursor: pointer;
+                            border: none;
+                            border-radius: 4px;
+                            background-color: #2196F3;
+                            color: white;
+                        }}
+                        button:hover {{
+                            background-color: #0b7dda;
+                        }}
+                    </style>
+                </head>
+                <body>
+                    <h1>Interactive Visualization for Prototype {prototype_idx} - {layer_name}</h1>
+                    <div class="main-container">
+                        <div class="left-panel">
+                            <div class="plot-container" id="scatter-plot"></div>
+                            
+                            <div class="cluster-selector">
+                                <span><strong>Show cluster: </strong></span>
+                """
+                
+                # Add cluster selector buttons
+                for j, cluster in enumerate(unique_clusters):
+                    html += f"""
+                    <button class="cluster-btn" 
+                            style="background-color: {colors[j]}; color: white;" 
+                            onclick="showClusterImages({j})">
+                        Cluster {j+1} ({len(sample_indices_by_cluster[j])} samples)
+                    </button>
+                    """
+                
+                html += """
+                            </div>
+                            
+                            <div class="control-row">
+                                <h3>Image Display: </h3>
+                                <select id="display-count" onchange="updateMaxImages()">
+                                    <option value="12">Show 12 images</option>
+                                    <option value="24">Show 24 images</option>
+                                    <option value="48">Show 48 images</option>
+                                    <option value="96">Show 96 images</option>
+                                    <option value="200">Show 200 images</option>
+                                </select>
+                            </div>
+                            
+                            <h2>Image Gallery</h2>
+                            <div id="gallery-info">Select points in the plot or click a cluster button to view images.</div>
+                            <div class="gallery-container" id="image-gallery"></div>
+                            <button class="load-more" id="load-more-btn" onclick="loadMoreImages()" style="display:none;">
+                                Load More Images
+                            </button>
+                        </div>
+                        
+                        <div class="right-panel">
+                """
+                
+                # Prototype Selector Section
+                if prototype_folders:
+                    available_prototypes = []
+                    for folder in prototype_folders:
+                        proto_id = os.path.basename(folder).replace("prototype_", "")
+                        try:
+                            proto_id = int(proto_id)
+                            available_prototypes.append(proto_id)
+                        except ValueError:
+                            continue
+                    
+                    if available_prototypes:
+                        html += """
+                            <h2>Prototype Explorer</h2>
+                            <div class="prototype-selector">
+                                <div class="control-row">
+                                    <select id="prototype-select">
+                        """
+                        
+                        for proto_id in sorted(available_prototypes):
+                            selected = "selected" if proto_id == prototype_idx else ""
+                            html += f"""
+                                        <option value="{proto_id}" {selected}>Prototype {proto_id}</option>
+                            """
+                        
+                        html += """
+                                    </select>
+                                    <button onclick="loadPrototypeView()">View Prototype</button>
+                                </div>
+                            </div>
+                        """
+                
+                # Prototype Patches Section
+                html += """
+                            <h2 id="prototype-title">Prototype {prototype_idx} Patches</h2>
+                """
+                
+                html += """
+                        <div class="prototype-patches" id="prototype-patches">
+                """
+                
+                if prototype_patches:
+                    # Add each patch
+                    for i, patch in enumerate(prototype_patches):
+                        html += f"""
+                        <div class="image-container">
+                            <img src="{patch['image']}" class="gallery-image" 
+                                onclick="selectPatch(this, {i})" alt="{patch['name']}"/>
+                            <div class="image-label">{patch['name']}</div>
+                        </div>
+                        """
+                else:
+                    html += """
+                        <p>No prototype patches available for this prototype.</p>
+                    """
+                    
+                html += """
+                        </div>
+                """
+                    
+                # Close the right panel and main container divs
+                html += """
+                        </div>
+                    </div>
+                    
+                    <script>
+                        // Store all image data
+                        const clusterData = {
+                """
+                
+                # Embed image data as JavaScript variables
+                for j in range(len(unique_clusters)):
+                    html += f"""
+                            {j}: {{
+                                indices: {sample_indices_by_cluster[j]},
+                                images: {images_by_cluster[j]},
+                                color: "{colors[j]}"
+                            }},
+                    """
+                
+                # Add additional samples if available
+                if additional_images:
+                    html += """
+                        additional: {
+                    """
+                    for sample_id, img_data in additional_images.items():
+                        html += f"""
+                            "{sample_id}": "{img_data}",
+                        """
+                    html += """
+                        },
+                    """
+                    
+                # Add prototype patch data
+                html += """
+                        };
+                        
+                        // Store prototype patch data
+                        const prototypePatches = [
+                """
+                
+                for patch in prototype_patches:
+                    html += f"""
+                        {{
+                            name: "{patch['name']}",
+                            image: "{patch['image']}"
+                        }},
+                    """
+                    
+                html += """
+                        ];
+                        
+                        // Variables to track current state
+                        let currentCluster = null;
+                        let currentSelection = [];
+                        let currentMaxImages = 12;
+                        let displayedCount = 0;
+                        
+                        // Create the scatter plot
+                        const scatterData = 
+                """
+                
+                # Embed the Plotly figure data
+                html += fig_scatter.to_json()
+                
+                html += """
+                        ;
+                        
+                        Plotly.newPlot('scatter-plot', scatterData.data, scatterData.layout);
+                        
+                        // All prototype patches data - will be populated during initialization
+                        const allPrototypePatches = {};
+                        
+                        // Function to display a different prototype without navigation
+                        function loadPrototypeView() {
+                            const prototypeSelect = document.getElementById('prototype-select');
+                            const selectedPrototype = prototypeSelect.value;
+                            const prototypePatchesElement = document.getElementById('prototype-patches');
+                            const prototypeTitle = document.getElementById('prototype-title');
+                            
+                            // Update the title
+                            if (prototypeTitle) {
+                                prototypeTitle.textContent = `Prototype ${selectedPrototype} Patches`;
+                            }
+                            
+                            // Clear current patches
+                            prototypePatchesElement.innerHTML = '';
+                            
+                            // Check if we have the data for this prototype
+                            if (allPrototypePatches[selectedPrototype]) {
+                                // Display patches for the selected prototype
+                                const patches = allPrototypePatches[selectedPrototype];
+                                
+                                if (patches.length === 0) {
+                                    prototypePatchesElement.innerHTML = '<p>No patches available for this prototype</p>';
+                                    return;
+                                }
+                                
+                                // Add each patch to the display
+                                patches.forEach((patch, i) => {
+                                    const div = document.createElement('div');
+                                    div.className = 'image-container';
+                                    
+                                    const img = document.createElement('img');
+                                    img.src = patch.image;
+                                    img.className = 'gallery-image';
+                                    img.onclick = function() { selectPatch(this, i); };
+                                    img.alt = patch.name;
+                                    
+                                    const label = document.createElement('div');
+                                    label.className = 'image-label';
+                                    label.textContent = patch.name;
+                                    
+                                    div.appendChild(img);
+                                    div.appendChild(label);
+                                    prototypePatchesElement.appendChild(div);
+                                });
+                            } else {
+                                // We don't have this prototype's data
+                                prototypePatchesElement.innerHTML = 
+                                    '<p>Data for this prototype is not preloaded. You can still view it by navigating to its dedicated page.</p>' +
+                                    '<button onclick="navigateToPrototype()">Go to Prototype ' + selectedPrototype + '</button>';
+                            }
+                        }
+                        
+                        // Fallback function to navigate to a different prototype if needed
+                        function navigateToPrototype() {
+                            const prototypeSelect = document.getElementById('prototype-select');
+                            const selectedPrototype = prototypeSelect.value;
+                            
+                            // Get current URL path and file name
+                            const currentPath = window.location.pathname;
+                            const currentDir = currentPath.substring(0, currentPath.lastIndexOf('/'));
+                            const baseDir = currentDir.substring(0, currentDir.lastIndexOf('/'));
+                            
+                            // Construct new path to the selected prototype's visualization
+                            const layerName = "${layer_name}";
+                            const newPath = `${baseDir}/prototype_${selectedPrototype}_visualizations/${layerName}_visualization.html`;
+                            
+                            // Navigate to the new URL
+                            window.location.href = newPath;
+                        }
+                        
+                        // Function to update max images to display
+                        function updateMaxImages() {
+                            const selectElement = document.getElementById('display-count');
+                            currentMaxImages = parseInt(selectElement.value);
+                            
+                            // Re-display current view with new limit
+                            if (currentCluster !== null) {
+                                showClusterImages(currentCluster, 0, true);
+                            } else if (currentSelection.length > 0) {
+                                showSelectedImages(currentSelection, 0, true);
+                            }
+                        }
+                        
+                        // Function to select a prototype patch
+                        function selectPatch(element, index) {
+                            // Toggle selection visual state
+                            const allPatches = document.querySelectorAll('#prototype-patches .gallery-image');
+                            allPatches.forEach(img => img.classList.remove('selected'));
+                            element.classList.add('selected');
+                            
+                            // You could add more functionality here to show this patch in detail
+                            console.log(`Selected patch ${index}: ${prototypePatches[index].name}`);
+                            
+                            // Display the selected patch in a larger view or with more information
+                            // This could be expanded to show more details about the patch
+                        }
+                        
+                        // Function to display images for a specific cluster
+                        function showClusterImages(clusterIdx, startIndex = 0, reset = false) {
+                            currentCluster = clusterIdx;
+                            currentSelection = [];
+                            
+                            const gallery = document.getElementById('image-gallery');
+                            const info = document.getElementById('gallery-info');
+                            const loadMoreBtn = document.getElementById('load-more-btn');
+                            const cluster = clusterData[clusterIdx];
+                            
+                            // Clear gallery if starting from beginning or resetting
+                            if (startIndex === 0 || reset) {
+                                gallery.innerHTML = '';
+                                displayedCount = 0;
+                            }
+                            
+                            // Calculate how many to show
+                            const remaining = cluster.images.length - startIndex;
+                            const numToShow = Math.min(remaining, currentMaxImages);
+                            
+                            // Update info text
+                            info.innerHTML = `Showing ${displayedCount + numToShow} of ${cluster.images.length} images from Cluster ${clusterIdx + 1}`;
+                            
+                            // Add images
+                            for (let i = 0; i < numToShow; i++) {
+                                const idx = startIndex + i;
+                                if (idx >= cluster.images.length) break;
+                                
+                                const div = document.createElement('div');
+                                div.className = 'image-container';
+                                
+                                const img = document.createElement('img');
+                                img.src = cluster.images[idx];
+                                img.className = 'gallery-image';
+                                img.style.border = `3px solid ${cluster.color}`;
+                                img.onclick = function() { this.classList.toggle('selected'); };
+                                
+                                const label = document.createElement('div');
+                                label.className = 'image-label';
+                                label.textContent = `Sample ${cluster.indices[idx]}`;
+                                
+                                div.appendChild(img);
+                                div.appendChild(label);
+                                gallery.appendChild(div);
+                                displayedCount++;
+                            }
+                            
+                            // Show/hide load more button
+                            if (displayedCount < cluster.images.length) {
+                                loadMoreBtn.style.display = 'block';
+                                loadMoreBtn.onclick = function() {
+                                    showClusterImages(clusterIdx, displayedCount);
+                                };
+                            } else {
+                                loadMoreBtn.style.display = 'none';
+                            }
+                        }
+                        
+                        // Function to display selected images
+                        function showSelectedImages(indices, startIndex = 0, reset = false) {
+                            currentCluster = null;
+                            currentSelection = indices;
+                            
+                            const gallery = document.getElementById('image-gallery');
+                            const info = document.getElementById('gallery-info');
+                            const loadMoreBtn = document.getElementById('load-more-btn');
+                            
+                            // Clear gallery if starting from beginning or resetting
+                            if (startIndex === 0 || reset) {
+                                gallery.innerHTML = '';
+                                displayedCount = 0;
+                            }
+                            
+                            // Calculate how many to show
+                            const remaining = indices.length - startIndex;
+                            const numToShow = Math.min(remaining, currentMaxImages);
+                            
+                            // Update info text
+                            info.innerHTML = `Showing ${displayedCount + numToShow} of ${indices.length} selected samples`;
+                            
+                            // Display images for selected points
+                            for (let i = 0; i < numToShow; i++) {
+                                const idx = startIndex + i;
+                                if (idx >= indices.length) break;
+                                
+                                const sampleIdx = indices[idx];
+                                let clusterIdx, imageIdx;
+                                
+                                // Find which cluster this sample belongs to
+                                for (const [cIdx, cluster] of Object.entries(clusterData)) {
+                                    if (cIdx === 'additional') continue; // Skip additional images
+                                    
+                                    const localIdx = cluster.indices.indexOf(sampleIdx);
+                                    if (localIdx !== -1) {
+                                        clusterIdx = parseInt(cIdx);
+                                        imageIdx = localIdx;
+                                        break;
+                                    }
+                                }
+                                
+                                if (clusterIdx === undefined) continue;
+                                
+                                const div = document.createElement('div');
+                                div.className = 'image-container';
+                                
+                                const img = document.createElement('img');
+                                img.src = clusterData[clusterIdx].images[imageIdx];
+                                img.className = 'gallery-image';
+                                img.style.border = `3px solid ${clusterData[clusterIdx].color}`;
+                                img.onclick = function() { this.classList.toggle('selected'); };
+                                
+                                const label = document.createElement('div');
+                                label.className = 'image-label';
+                                label.textContent = `Sample ${sampleIdx}`;
+                                
+                                div.appendChild(img);
+                                div.appendChild(label);
+                                gallery.appendChild(div);
+                                displayedCount++;
+                            }
+                            
+                            // Show/hide load more button
+                            if (displayedCount < indices.length) {
+                                loadMoreBtn.style.display = 'block';
+                                loadMoreBtn.onclick = function() {
+                                    showSelectedImages(indices, displayedCount);
+                                };
+                            } else {
+                                loadMoreBtn.style.display = 'none';
+                            }
+                        }
+                        
+                        // Function to load more images
+                        function loadMoreImages() {
+                            if (currentCluster !== null) {
+                                showClusterImages(currentCluster, displayedCount);
+                            } else if (currentSelection.length > 0) {
+                                showSelectedImages(currentSelection, displayedCount);
+                            }
+                        }
+                        
+                        // Handle selection events from the plot
+                        document.getElementById('scatter-plot').on('plotly_selected', function(eventData) {
+                            if (!eventData || !eventData.points || eventData.points.length === 0) {
+                                return;
+                            }
+                            
+                            // Collect selected points
+                            const selectedIndices = eventData.points.map(pt => pt.customdata[0]);
+                            
+                            // Display the selected images
+                            showSelectedImages(selectedIndices);
+                        });
+                        
+                        // Show the first cluster by default
+                        showClusterImages(0);
+                    </script>
+                </body>
+                </html>
+            
+               """ 
+                # Store the HTML for this layer
+                results[layer_idx] = html
+            
+            # Save HTML files to disk
+            output_dir = f"{output_path}/prototype_{prototype_idx}_visualizations"
+            os.makedirs(output_dir, exist_ok=True)
+            
+            for layer_idx, html_content in results.items():
+                layer_name = layer_names.get(layer_idx, f"layer_{layer_idx}")
+                file_path = os.path.join(output_dir, f"{layer_name}_visualization.html")
+                
+                with open(file_path, "w") as f:
+                    f.write(html_content)
+                
+                print(f"Saved visualization for layer {layer_idx} to {file_path}")
+            
+            return results

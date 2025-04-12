@@ -72,7 +72,7 @@ class PURE:
    
         
     def find_top_activating_samples(self, dataloader, prototype_idx,
-                                     return_masked_attributions=False, activation_threshold=0.2):
+                                     return_masked_attributions=False, activation_threshold=0.5):
         """
         Find the top activating samples for a prototype.
         
@@ -110,7 +110,7 @@ class PURE:
                 # Get activations for the target prototype
                 batch_activations = pooled[:, prototype_idx].cpu()
                 for i,_ in enumerate(batch_activations):
-                    max_per_prototype, max_idx_per_prototype = torch.max(proto_features, dim=0)
+                    max_per_prototype, max_idx_per_prototype = torch.max(proto_features[i].unsqueeze(0), dim=0)
                     # In PyTorch, images are represented as [channels, height, width]
                     max_per_prototype_h, max_idx_per_prototype_h = torch.max(max_per_prototype, dim=1)
                     max_per_prototype_w, max_idx_per_prototype_w = torch.max(max_per_prototype_h, dim=1)
@@ -120,7 +120,7 @@ class PURE:
                     # max_h, max_w = max_pos[0][0].item(), max_pos[1][0].item()
                     
                     # Convert feature map coordinates to image coordinates
-                    skip = round((img_h - patch_size) / (activation_map.shape[1]-1))
+                    skip = round((img_h - patch_size) / (activation_map.shape[-1]-1))
                     h_min, h_max, w_min, w_max = get_img_coordinates(img_h, proto_features.shape, patch_size, skip, h_idx, w_idx)
 
                     act_img = inputs[i].cpu().clone()
@@ -138,6 +138,7 @@ class PURE:
                     for t in range(thickness):
                         act_img[:, y:y+h, x+t] = color_tensor
                         act_img[:, y:y+h, x+w-t-1] = color_tensor
+
     
                     activated_images.append(act_img)
                 

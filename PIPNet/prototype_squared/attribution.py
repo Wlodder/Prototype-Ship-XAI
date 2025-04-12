@@ -17,7 +17,7 @@ class EnhancedForwardPURE:
     Enhanced implementation of PURE using the same layer structure and attribution
     method as MultiLayerAttributionAnalyzer.
     """
-    def __init__(self, pipnet_model, device='cuda'):
+    def __init__(self, pipnet_model, layer_weights, device='cuda'):
         """
         Initialize with a trained PIPNet model.
         
@@ -27,7 +27,7 @@ class EnhancedForwardPURE:
         """
         self.model = pipnet_model
         self.device = device
-        self.centroids_by_layer = {}
+        self.centroids = {}
         
         # Extract classification weights for decision making
         self.classification_weights = pipnet_model.module._classification.weight.data
@@ -38,6 +38,16 @@ class EnhancedForwardPURE:
         # Will store mapping between analyzer's layer indices and centroid layer indices
         self.layer_mapping = None
 
+        # Store layer weights for distance computation
+        total_weight = sum(layer_weights.values())
+        layer_weights = {idx: w/total_weight for idx, w in layer_weights.items()}
+        self._layer_weights = layer_weights
+        self._layer_indicies = list(layer_weights.keys())
+
+        # Store centroids for each layer
+        self.centroids_by_layer = {}
+        self.centroids = []
+
     def add_centroids(self, split_results):
         """
         Add pre-computed centroids for each layer to the model.
@@ -47,71 +57,22 @@ class EnhancedForwardPURE:
         """
         # Process and store centroids
         for proto_batch, _ in split_results.items(): 
-            for layer, centroids in split_results[proto_batch]['centroids'].items():
-                if layer not in self.centroids_by_layer:
-                    self.centroids_by_layer[layer] = []
-                self.centroids_by_layer[layer].append(centroids)
+            # for layer_idx, centroid in split_results[proto_batch]['centroids'].items():
+
+            #     if layer_idx not in self.centroids_by_layer:
+            #         self.centroids_by_layer[layer_idx] = []
+
+            #     self.centroids_by_layer[layer_idx].append(centroid)
+
+            for concat_centroid in split_results[proto_batch]['overall_centroids']:
+                self.centroids.append(concat_centroid)
         
         # Compute automatic layer mapping now that we have centroids
-        self.layer_mapping = self.compute_automatic_layer_mapping()
-        
-        print(f"Added centroids for layers: {list(self.centroids_by_layer.keys())}")
-        print(f"Created mapping between analyzer layers and centroid layers: {self.layer_mapping}")
+        print(f"Added centroids : {len(self.centroids)}")
+        print(f"Added centroids : {self.centroids_by_layer.keys()}")
 
-    def compute_automatic_layer_mapping(self):
-        """
-        Compute mapping between analyzer's layer indices and centroid layer indices.
-        
-        Returns:
-            Dictionary mapping analyzer layer indices to centroid layer indices
-        """
-        # Get available centroid layer indices
-        centroid_layer_indices = sorted(list(self.centroids_by_layer.keys()))
-        
-        if not centroid_layer_indices:
-            print("Warning: No centroids available for mapping")
-            return {}
-        
-        # Get analyzer's layer indices
-        analyzer_layer_indices = list(range(len(self.analyzer.layer_modules)))
-        
-        # If the number of layers matches exactly, create a direct mapping
-        if len(analyzer_layer_indices) == len(centroid_layer_indices):
-            return {idx: centroid_idx for idx, centroid_idx in zip(analyzer_layer_indices, centroid_layer_indices)}
-        
-        # Otherwise, we need to create a mapping based on layer depth
-        mapping = {}
-        
-        # Add special cases: input layer and final layer
-        mapping[0] = centroid_layer_indices[0]  # First analyzer layer -> first centroid layer
-        mapping[analyzer_layer_indices[-1]] = centroid_layer_indices[-1]  # Last analyzer layer -> last centroid layer
-        
-        # For the intermediate layers, distribute them evenly
-        if len(analyzer_layer_indices) > 2 and len(centroid_layer_indices) > 2:
-            # Get intermediate layers (excluding first and last)
-            intermediate_analyzer_layers = analyzer_layer_indices[1:-1]
-            intermediate_centroid_layers = centroid_layer_indices[1:-1]
-            
-            # Create evenly spaced mapping
-            for i, analyzer_idx in enumerate(intermediate_analyzer_layers):
-                # Find nearest centroid layer
-                if intermediate_centroid_layers:
-                    relative_pos = i / max(1, len(intermediate_analyzer_layers) - 1)
-                    centroid_pos = int(relative_pos * (len(intermediate_centroid_layers) - 1))
-                    mapping[analyzer_idx] = intermediate_centroid_layers[min(centroid_pos, len(intermediate_centroid_layers) - 1)]
-        
-        # For analyzer layers that weren't mapped, assign to nearest mapped layer
-        for analyzer_idx in analyzer_layer_indices:
-            if analyzer_idx not in mapping:
-                # Find nearest mapped layer
-                distances = [(abs(analyzer_idx - mapped_idx), mapped_idx, centroid_idx) 
-                           for mapped_idx, centroid_idx in mapping.items()]
-                _, _, nearest_centroid_idx = min(distances)
-                mapping[analyzer_idx] = nearest_centroid_idx
-        
-        return mapping
 
-    def compute_attributions(self, x, prototype_idx, layer_indices=None):
+    def compute_attributions(self, x, prototype_idx):
         """
         Compute attributions using the MultiLayerAttributionAnalyzer's method.
         
@@ -125,7 +86,7 @@ class EnhancedForwardPURE:
         """
         # Use the analyzer's method to compute attributions
         attributions = self.analyzer.compute_layer_attributions(
-            x, prototype_idx, layer_indices
+            x, prototype_idx, self._layer_indicies
         )
         
         # Get the prototype activation for this input
@@ -135,6 +96,42 @@ class EnhancedForwardPURE:
         
         # Return both the attributions and the activation
         return attributions, activation
+
+    def _process_attribution(self, attribution):
+        """
+        Process the attribution to ensure it's in the correct format.
+        
+        Args:
+            attribution: Attribution tensor
+        """
+        
+        # Combine attributions from all layers
+    
+        # Collect attributions for this sample from all layers
+        sample_features = {}
+        
+        
+        for layer_idx, weight in self._layer_weights.items():
+            if layer_idx in attribution:
+                # Get attribution for this layer and sample
+                layer_attr = attribution[layer_idx][0]
+                
+                # Flatten and normalize the attribution
+                flat_attr = layer_attr.flatten()
+                norm = torch.norm(flat_attr)
+                if norm > 0:
+                    flat_attr = flat_attr / norm
+                
+                # Weight by layer importance
+                flat_attr = flat_attr * weight
+                
+                sample_features[layer_idx] = flat_attr
+        
+        # Concatenate all layer features
+        if sample_features:
+            combined_attr = torch.cat(list(sample_features.values()))
+        
+        return combined_attr, sample_features
 
     def compute_attribution_distances(self, attributions):
         """
@@ -146,69 +143,34 @@ class EnhancedForwardPURE:
         Returns:
             Dictionary of distances to centroids for each analyzer layer
         """
+        combined_attributions, sample_features = self._process_attribution(attributions)
         distances = {}
+        # for i, centroid in enumerate(self.centroids):
+        #     distances[i] = torch.nn.functional.pairwise_distance(combined_attributions, centroid)
         
-        # For each layer in the attributions
-        for analyzer_layer_idx, attribution in attributions.items():
-            # Skip if attribution is None
-            if attribution is None:
-                continue
-            
-            # Map analyzer layer to centroid layer using our mapping
-            if self.layer_mapping and analyzer_layer_idx in self.layer_mapping:
-                centroid_layer_idx = self.layer_mapping[analyzer_layer_idx]
-            else:
-                # Skip if we can't map this layer
-                continue
-            
-            # Skip if we don't have centroids for this layer
-            if centroid_layer_idx not in self.centroids_by_layer:
-                continue
-            
-            # Get centroids for this layer
-            layer_centroids = self.centroids_by_layer[centroid_layer_idx]
-            if not layer_centroids:
-                continue
-            
-            # Compute distances to each centroid group
+        for layer in sample_features.keys():
+            # Compute distances to centroids for this layer
             layer_distances = []
-            
-            for centroid_group in layer_centroids:
-                # Convert attribution to a flat vector for comparison
-                flat_attr = attribution.flatten()
-                
-                # Compute distances to all centroids in this group
-                centroid_distances = []
-                
-                for centroid in centroid_group:
-                    # Convert centroid to tensor if needed
-                    if not isinstance(centroid, torch.Tensor):
-                        centroid = torch.tensor(centroid, device=self.device)
-                    
-                    # Flatten centroid for comparison
-                    flat_centroid = centroid.flatten().cuda()
-                    
-                    
-                    # Handle dimension mismatch
-                    if flat_attr.shape[0] != flat_centroid.shape[0]:
-                        min_dim = min(flat_attr.shape[0], flat_centroid.shape[0])
-                        distance = torch.norm(flat_attr[:min_dim] - flat_centroid[:min_dim])
-                    else:
-                        distance = torch.norm(flat_attr - flat_centroid)
-                    
-                    centroid_distances.append(distance.item())
-                
-                # Store the minimum distance to any centroid in this group
-                if centroid_distances:
-                    layer_distances.append(min(centroid_distances))
+            combined_distances = []
+
+            for concatenated_centroid in self.centroids:
+                centroid = concatenated_centroid.to(self.device)
+                dist = torch.nn.functional.pairwise_distance(combined_attributions, centroid)
+                combined_distances.append(dist)
+
+            # for centroid in self.centroids_by_layer[layer]:
+            #     # Compute distance
+            #     centroid = centroid.to(self.device)
+            #     dist = torch.nn.functional.pairwise_distance(sample_features[layer], centroid)
+                # layer_distances.append(dist)
             
             # Store distances for this layer
-            if layer_distances:
-                distances[analyzer_layer_idx] = layer_distances
+            distances[layer] = layer_distances
         
-        return distances
+        return distances, combined_distances
 
-    def enhanced_classification(self, x, layer_indices=None, distance_threshold=3.0):
+
+    def enhanced_classification(self, x, layer_indices=None, distance_threshold=3.0, custom_prototypes=None):
         """
         Perform classification enhanced by centroid-based attribution matching.
         
@@ -251,7 +213,9 @@ class EnhancedForwardPURE:
             active_protos = torch.where(pooled[i] > 0.3)[0].tolist()
             
             # Limit to top 10 most activated prototypes for efficiency
-            if len(active_protos) > 10:
+            if custom_prototypes is not None:
+                active_protos = custom_prototypes
+            elif len(active_protos) > 10:
                 _, top_indices = torch.topk(pooled[i], 10)
                 active_protos = top_indices.tolist()
             
@@ -259,12 +223,22 @@ class EnhancedForwardPURE:
             for proto_idx in active_protos:
                 # Compute attributions using the analyzer
                 attributions, activation = self.compute_attributions(
-                    sample, proto_idx, layer_indices
+                    sample, proto_idx
                 )
 
+                if activation < 0.3:
+                    continue
+
+                # print(f"Attributions for prototype {proto_idx}: {attributions}")
                 
                 # Compute distances to centroids
-                distances = self.compute_attribution_distances(attributions)
+                distances, real_distances = self.compute_attribution_distances(attributions)
+                for layer_idx, layer_distances in distances.items():
+                    distances[layer_idx] = [dist.flatten() for dist in layer_distances]
+                
+                real_distances = torch.tensor(real_distances)
+                real_distances = torch.softmax(1/real_distances, dim=0)
+                print(f"Real Distances for prototype {proto_idx}: {real_distances}")
                 
                 # Skip if no valid distances
                 if not distances:
@@ -280,13 +254,13 @@ class EnhancedForwardPURE:
                         'distance':layer_distances,
                         'layer_name': self.analyzer.layer_names[layer_idx] if layer_idx < len(self.analyzer.layer_names) else f"layer_{layer_idx}"
                     }])
-                    min_distance = min(layer_distances)
-                    if min_distance < best_match['distance']:
-                        best_match = {
-                            'layer': layer_idx,
-                            'distance': min_distance,
-                            'layer_name': self.analyzer.layer_names[layer_idx] if layer_idx < len(self.analyzer.layer_names) else f"layer_{layer_idx}"
-                        }
+                    # min_distance = min(layer_distances)
+                    # if min_distance < best_match['distance']:
+                    #     best_match = {
+                    #         'layer': layer_idx,
+                    #         'distance': min_distance,
+                    #         'layer_name': self.analyzer.layer_names[layer_idx] if layer_idx < len(self.analyzer.layer_names) else f"layer_{layer_idx}"
+                    #     }
                 
                 # Store match information
                 enhanced_results['centroid_matches'][i].append({

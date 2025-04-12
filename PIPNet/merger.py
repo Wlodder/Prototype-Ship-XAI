@@ -9,6 +9,8 @@ from util.data import get_dataloaders
 import matplotlib.pyplot as plt
 import numpy as np
 from prototype_squared import attribution
+from util.vis_pipnet import  visualize_prototypes, visualize_prototype
+from scipy.stats import beta
 
 def split_and_merge_prototypes(args=None):
     """
@@ -44,7 +46,20 @@ def split_and_merge_prototypes(args=None):
         net.load_state_dict(checkpoint['model_state_dict'], strict=True)
     else:
         raise ValueError("Please provide a pretrained model using --state_dict_dir_net")
-    
+
+
+    with torch.no_grad():
+        xs1,  _ = next(iter(trainloader_normal))
+        xs1 = xs1.to(device)
+        proto_features, _, _, features = net(xs1, features_save=True)
+
+        wshape = proto_features.shape[-1]
+        args.wshape = wshape #needed for calculating image patch size
+        
+    if args.analyze_all_prototypes:
+        for example_prototype in range(args.num_features):
+            visualize_prototype(net, test_projectloader, len(classes), device, f'visualised_prototypes_represent',
+                                args, prototype=example_prototype)
     # Initialize PrototypeManager
     prototype_manager = PrototypeManager(net, device=device)
     
@@ -52,30 +67,28 @@ def split_and_merge_prototypes(args=None):
     print("Analyzing prototypes to find polysemantic ones...")
     
     # Option 1: Analyze all prototypes (can be slow)
-    if args.analyze_all_prototypes:
-        all_protos = np.arange(net.module._num_prototypes)
-        # Filter to only include prototypes with non-zero class weights
-        used_protos = []
-        class_weights = net.module._classification.weight.data
-        for p in all_protos:
-            if torch.max(class_weights[:, p]) > 0.01:  # Threshold for considering a prototype used
-                used_protos.append(p)
-        
-        # Analyze a subset of the used prototypes to save time
-        sample_size = min(50, len(used_protos))  # Limit to 50 prototypes for analysis
-        prototype_indices = np.random.choice(used_protos, size=sample_size, replace=False)
-    
-    # Option 2: Use predefined list of prototypes
-    else:
-        prototype_indices = args.prototype_indices if hasattr(args, 'prototype_indices') else [3, 29, 30]  # Example prototypes
+    prototype_indices = args.prototype_indices if hasattr(args, 'prototype_indices') else [3, 29, 30]  # Example prototypes
     
     # prototype_indices  = prototype_indices + [[3,22]]
-    random_samples = 0
+    random_samples = 2
 
+    prototype_indices = [[57,59],[51,68],[22]]
+    # for i in range(random_samples):
+    #     prototype_indices.append(list(np.random.randint(0, args.num_features, size=(3))))
     # prototype_indices  = [[3,22,102,103]]#, 135, 140]] 
-    prototype_indices  = [[14,11,61]]#,32,15]]#, 135, 140]] 
-    for i in range(random_samples):
-        prototype_indices.append(list(np.random.choice(args.num_features, size=(5), replace=False)))
+    # prototype_indices  = [[5,6,7,8,9],[10,11,12,13,14],[15,16,17,18,19],[20,21,22,23,24],[25,26,27,28,29],[30,31,32,33,34],[35,36,37,38,39],[40,41,42,43]]
+    example_prototypes = set()
+    # prototype_indices  = [[0],[0,1],[0,1,2],[0,1,2,3]]
+    for i in range(len(prototype_indices)):
+        example_prototypes = example_prototypes.union(set(prototype_indices[i]))
+
+
+    # print(f"Visualizing prototypes...{example_prototypes}")
+    # for example_prototype in example_prototypes:
+    #     visualize_prototype(net, test_projectloader, len(classes), device, f'visualised_prototypes_represent',
+    #                         args, prototype=example_prototype)
+    # for i in range():
+    #     prototype_indices.append(list(np.random.choice(args.num_features, size=(5), replace=False)))
     # prototype_indices  = [[3,22]]
     print(f"Analyzing {len(prototype_indices)} prototypes: {prototype_indices}")
     
@@ -93,32 +106,39 @@ def split_and_merge_prototypes(args=None):
         #     algorithm=args.clustering_algorithm  # Use the specified clustering algorithm
         # )
 
-        layer_weights = { 7:0.5,
-                    6:1.0,
-                    5:1.1,
-                    4:1.2,
-                    3:0.6,
-                    2:0.0,
-                    1:0.0}
+        # Set layer weights as a beta distribution
+        values = beta.pdf(np.linspace(1, 0, 7), a=args.a, b=args.b)
+        layer_weights = {}
+
+        for i in range(1,8,1):
+            layer_weights[i] = values[i-1]
+        # layer_weights = { 7:1.0,
+        #             6:1.1,
+        #             5:1.6,
+        #             4:1.0,
+        #             3:0.3,
+        #             2:0.0,
+        #             1:0.0}
         split_results = prototype_manager.split_multiple_prototypes_multi_depth(
             trainloader_normal,
             prototype_indices,
             adaptive=args.adaptive_clustering,
             visualize=args.visualize_results,
             algorithm=args.clustering_algorithm,  # Use the specified clustering algorithm
-            layer_weights=layer_weights
+            layer_weights=layer_weights,
+            output_path=args.output_path
         )
 
         # We return the new cluster centroids, for each level and place the centroids into a new model
         # Adatper that does the propagation in the backwards pass.
 
         print(split_results.keys())
-        for key, value in split_results.items():
-            for x, item  in split_results[key]['centroids'].items():
-                print(item.size())
-                os.makedirs(f'pure_prototypes/{key}', exist_ok=True)
-                for grad_prototype in item:
-                    torch.save(grad_prototype, os.path.join(f"pure_prototypes/{key}/centroid_{key}_{x}.pt"))
+        # for key, value in split_results.items():
+        #     for x, item  in split_results[key]['centroids'].items():
+        #         print(item.size())
+        #         os.makedirs(f'pure_prototypes/{key}', exist_ok=True)
+        #         for grad_prototype in item:
+        #             torch.save(grad_prototype, os.path.join(f"pure_prototypes/{key}/centroid_{key}_{x}.pt"))
                 
         p2model = attribution.EnhancedForwardPURE(
             net,
@@ -132,7 +152,7 @@ def split_and_merge_prototypes(args=None):
         # Testing against the new model for inference mode
         xs1,  _ = next(iter(trainloader_normal))
         xs1 = xs1.to(device)
-        results = p2model.enhanced_classification(xs1)
+        results = p2model.enhanced_classification(xs1, custom_prototypes=prototype_indices[0])
 
 
         for centroid_match in results['centroid_matches']:
@@ -160,7 +180,7 @@ if __name__ == "__main__":
                         help='Analyze and split polysemantic prototypes')
     parser.add_argument('--n_clusters', type=int, default=None,
                         help='Number of clusters for splitting (if None, determined automatically)')
-    parser.add_argument('--adaptive_clustering', action='store_true', default=True,
+    parser.add_argument('--adaptive_clustering', action='store_true', default=False,
                         help='Adaptively determine number of clusters')
     parser.add_argument('--apply_splitting', action='store_true',
                         help='Actually modify the model by splitting prototypes')
@@ -169,7 +189,7 @@ if __name__ == "__main__":
     parser.add_argument('--save_expanded_model', action='store_true', 
                         help='Save the model with expanded prototypes')
     parser.add_argument('--clustering_algorithm', type=str, default='kmeans',
-                        choices=['kmeans', 'hdbscan', 'gmm', 'spectral'],
+                        choices=['kmeans', 'hdbscan', 'gmm', 'spectral','hdbscan_kmeans'],
                         help='Clustering algorithm to use for prototype splitting')
     parser.add_argument('--use_adaptive_expansion', action='store_true', default=True,
                         help='Use adaptive step size when expanding prototypes')
@@ -191,10 +211,10 @@ if __name__ == "__main__":
     parser.add_argument('--merge_strategy', type=str, default='weighted_average',
                         choices=['weighted_average', 'max'],
                         help='Strategy for merging prototypes')
-    parser.add_argument('--apply_merging', action='store_true',
-                        help='Actually modify the model by merging prototypes')
-    parser.add_argument('--save_merged_model', action='store_true',
-                        help='Save the model with merged prototypes')
+    parser.add_argument('--output_path', type=str, default='.')
+    parser.add_argument('-b', type=int, default=2)
+    parser.add_argument('-a', type=int, default=10)
+
     
     # Visualization options
     parser.add_argument('--visualize_results', action='store_true', default=True,
