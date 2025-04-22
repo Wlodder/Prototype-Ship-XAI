@@ -1,7 +1,12 @@
 #!/bin/bash 
 
+# Paths
+TRAIN_PATH=$TRAIN_JANES_MARVEL_PATH
+TEST_PATH=$TEST_JANES_MARVEL_PATH
+PUSH_PATH=$PUSH_JANES_MARVEL_PATH
+
 # Architecture and model
-N_CLASSES=8
+N_CLASSES=$(ls $TRAIN_PATH | wc -l)
 MODEL="resnet50"
 PROTOTYPE_ACTIVATION_FUNCTION="log"
 
@@ -27,11 +32,6 @@ SEP=True
 CAPCOEF=0.01
 CAPL=4.5
 
-
-TRAIN_PATH=$TRAIN_MMARVEL_PATH
-TEST_PATH=$TEST_MMARVEL_PATH
-PUSH_PATH=$PUSH_MMARVEL_PATH
-
 RESULTS_PATH=$PROTO_PNET_RESULTS_DIR/ProtoPNet/${PROTO_DEPTH}_${NUM_PROTOTYPES}_${PROTOTYPE_ACTIVATION_FUNCTION}
 
 
@@ -42,12 +42,12 @@ python $PROTO_PNET_RUNDIR/main_ctrl_caps.py --num_classes $N_CLASSES --train_bat
       # --gpuid 0 
    #   --k $K \
 
-# MODEL_PATH=$(find $RESULTS_PATH -name *.pth | grep final)
-# SAVE_DIR=$RESULTS_PATH/local_analysis/
-# VIS_PATH=$(dirname $(find $RESULTS_PATH -name *npy))
-# echo $VIS_PATH
-# python $TESNET_RUNDIR/local_analysis_final.py --data_train $TRAIN_PATH --data_push $PUSH_PATH --data_test $TEST_PATH --model_dir $MODEL_PATH \
-#  --batch_size $BATCH_SIZE --num_descriptive $NUM_DESCRIPTIVE --num_prototypes $NUM_PROTOTYPES \
-#   --num_classes $N_CLASSES --arch $MODEL --gpuid 0 --pretrained --proto_depth $PROTO_DEPTH \
-#    --prototype_activation_function $PROTOTYPE_ACTIVATION_FUNCTION --last_layer --use_thresh --capl $CAPL \
-#    --save_analysis_dir $SAVE_DIR --target_img_dir $TEST_PATH --prototype_img_dir $VIS_PATH
+MODEL_PATH=$(find $RESULTS_PATH -name *.pth | grep final)
+SAVE_DIR=$RESULTS_PATH/local_analysis/
+VIS_PATH=$(dirname $(find $RESULTS_PATH -name *npy))
+echo $VIS_PATH
+python $TESNET_RUNDIR/local_analysis_final.py --data_train $TRAIN_PATH --data_push $PUSH_PATH --data_test $TEST_PATH --model_dir $MODEL_PATH \
+ --batch_size $BATCH_SIZE --num_descriptive $NUM_DESCRIPTIVE --num_prototypes $NUM_PROTOTYPES \
+  --num_classes $N_CLASSES --arch $MODEL --gpuid 0 --pretrained --proto_depth $PROTO_DEPTH \
+   --prototype_activation_function $PROTOTYPE_ACTIVATION_FUNCTION --last_layer --use_thresh --capl $CAPL \
+   --save_analysis_dir $SAVE_DIR --target_img_dir $TEST_PATH --prototype_img_dir $VIS_PATH
