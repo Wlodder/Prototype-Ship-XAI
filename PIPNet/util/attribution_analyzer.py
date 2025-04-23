@@ -1845,7 +1845,7 @@ class MultiLayerAttributionAnalyzer:
                 print(f"Finding top activating samples for {proto_idx} in {group_name}")
                 # Find top activating samples
                 pure_analyzer = PURE(self.model, device=self.device, num_ref_samples=max_samples)
-                samples, activations, activated_samples = pure_analyzer.find_top_activating_samples(dataloader, proto_idx, True)
+                samples, activations, activated_samples = pure_analyzer.find_top_activating_samples(dataloader, proto_idx, True, 0.3)
                 
                 # Store samples and track which prototype they belong to
                 all_samples.append(samples)
@@ -2806,3 +2806,5 @@ class MultiLayerAttributionAnalyzer:
                 print(f"Saved visualization for layer {layer_idx} to {file_path}")
             
             return results
+
+

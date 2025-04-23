@@ -218,10 +218,11 @@ def visualize_topk(net, projectloader, num_classes, device, foldername, args: ar
             pfs = pfs.squeeze(0) 
             
             for p in range(pooled.shape[0]):
-                c_weight = classification_weights[:, :, p].abs().max()
+                # Multi head code
+                # c_weight = classification_weights[:, :, p].abs().max()
 
                 # If using norml
-                # c_weight = torch.max(classification_weights[:,p]) 
+                c_weight = torch.max(classification_weights[:,p]) 
                 if c_weight > 1e-3:#ignore prototypes that are not relevant to any class
                     if p not in topks.keys():
                         topks[p] = []
@@ -276,9 +277,11 @@ def visualize_topk(net, projectloader, num_classes, device, foldername, args: ar
                             max_per_prototype_h, max_idx_per_prototype_h = torch.max(max_per_prototype, dim=1)
                             max_per_prototype_w, max_idx_per_prototype_w = torch.max(max_per_prototype_h, dim=1) #shape (num_prototypes)
                             
-                            c_weight = classification_weights[:, :, p].abs().max()
+
+                            # For multi head use this
+                            # c_weight = classification_weights[:, :, p].abs().max()
                             # For non head use this
-                            # c_weight = torch.max(classification_weights[:,p]) #ignore prototypes that are not relevant to any class
+                            c_weight = torch.max(classification_weights[:,p]) #ignore prototypes that are not relevant to any class
                             if (c_weight > 1e-10) or ('pretrain' in foldername):
                                 
                                 h_idx = max_idx_per_prototype_h[p, max_idx_per_prototype_w[p]]
@@ -683,7 +686,7 @@ def visualize_prototype(net, projectloader, num_classes, device, foldername, arg
     else:
         skip_img = 2
 
-    # skip_img = 2
+    skip_img = 10
     print("Every", skip_img, "is skipped in order to speed up the visualisation process", flush=True)
 
     # Make sure the model is in evaluation mode

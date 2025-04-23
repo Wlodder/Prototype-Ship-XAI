@@ -1,6 +1,5 @@
 import argparse
 import os
-from datetime import datetime
 from pathlib import Path
 from typing import List, Optional
 import numpy as np
@@ -15,7 +14,7 @@ import sys
 # Adding the utils to the path to be found
 
 sys.path.append(os.environ['PACKAGE_PATH'])
-from joint.data.datasets import class_mappings
+from joint.data.data import get_shared_loaders
 from utils import mixup_data, find_high_activation_crop
 import os
 import matplotlib.pyplot as plt
@@ -25,6 +24,7 @@ from PIL import Image
 import copy
 from preprocess import preprocess_input_function, undo_preprocess_input_function
 import pickle
+from torchvision.datasets import DatasetFolder
 
 ##### HELPER FUNCTIONS FOR PLOTTING
 def makedir(path):
@@ -71,10 +71,12 @@ def load_model(model, path, device):
 
 def local_analysis(imgs, model_multi, proto_info_dir, vis_count,
                     save_analysis_dir, test_data, 
-                    transforms_train_test,prototype_img_identity,protoc_info):
-    imgs_sep = imgs.split('/') # eg. 083.White_breasted_Kingfisher\White_Breasted_Kingfisher_0012_73367.jpg
-    img_file_name = imgs_sep[0] # eg. 083.White_breasted_Kingfisher
+                    transforms_train_test,prototype_img_identity,protoc_info, class_mappings=None,
+                    args=None):
+
+    imgs_sep = imgs.split('/')[-2:] # eg. 083.White_breasted_Kingfisher\White_Breasted_Kingfisher_0012_73367.jpg
     #eg. ~./083.White_breasted_Kingfisher/White_Breasted_Kingfisher_0012_73367.jpg
+
     analysis_rt = os.path.join(save_analysis_dir, imgs_sep[0],imgs_sep[1]) 
     makedir(analysis_rt)
     img_rt = os.path.join(test_data, imgs)
@@ -82,7 +84,7 @@ def local_analysis(imgs, model_multi, proto_info_dir, vis_count,
     img_tensor = transforms_train_test(img_pil)
     img_variable = Variable(img_tensor.unsqueeze(0))
     # img_file_name = imgs.split('/')[-1]
-    test_image_label = class_mappings[int(imgs.split('/')[1])]
+    test_image_label = class_mappings[imgs_sep[0]]
     images_test = img_variable
 
 
@@ -119,7 +121,7 @@ def local_analysis(imgs, model_multi, proto_info_dir, vis_count,
     print(model_multi.module.last_layer.weight.size())
 
     # Reshape to num_classes x num_classes x num_prototypes
-    llw = model_multi.module.last_layer.weight.reshape(8, 8, 10)
+    llw = model_multi.module.last_layer.weight.reshape(args.num_classes, args.num_classes, args.num_descriptive)
     prototype_img_filename_prefix='prototype-img'
     for idx, i in enumerate(identity):
         # check if there is visualization for given prototypes
@@ -434,32 +436,17 @@ def analyze(opt: Optional[List[str]]) -> None:
                 total += label.size(0)
             tst_acc = tst_acc.item() / total
             print('The testing accuracy of the given model is:',tst_acc)
-    # just an example, I leave this in for easier modification to run analysis on all the images 
 
-    img_list = [ 
-		"./169/HMS_Ark_Royal_R07__-_IMO_8949575/246631.jpg",
-		"./164/RFS_Soobrazitelny_531__-_IMO_4614615/1362292.jpg",
-		"./163/ESPS_Descubierta_P75_/655203.jpg",
-		"./166/ITS_FRANCESCO_MIMBELLI_D561__-_IMO_4568919/2237975.jpg",
-		"./164/RFS_R-60_955__-_IMO_4615102/838170.jpg",
-		"./166/HMS_DRAGON_D35__-_IMO_4907866/3774980.jpg",
-		"./164/USS_Savannah_LCS28__-_IMO_4758708/3315945.jpg",
-		"./163/ENS_Badr_678_/2252037.jpg",
-		"./166/USS_Stout_DDG55__-_IMO_4676833/2876587.jpg",
-		"./164/FGS_OLDENBURG_F263__-_IMO_4548660/1137374.jpg",
-		"./166/USS_William_P._Lawrence_DDG110__-_IMO_4677382/2208409.jpg",
-		"./166/FS_LANGUEDOC_D653__-_IMO_4545046/2842681.jpg",
-		"./163/ARM_Algorab_PI1409_/2904506.jpg",
-		"./170/ORP_Sokol_294_/1852890.jpg",
-		"./166/ITS_Luigi_Durand_de_la_Penne_D560__-_IMO_4568907/2104079.jpg",
-		"./161/FGS_Passau_M1096__-_IMO_4907256/1123578.jpg",
-		"./161/RFS_BT-115_515_/2893327.jpg",
-		"./166/HMS_Dauntless_D33__-_IMO_4907751/1752167.jpg",
-		"./166/FS_LANGUEDOC_D653__-_IMO_4545046/2561858.jpg",
-		"./164/RFS_STEREGUSHCHIY_530__-_IMO_4614603/1830444.jpg"
-    ]
+    # just an example, I leave this in for easier modification to run analysis on all the images 
+    path = args.data_test
+    print(path)
+    img_list = Path(args.data_test).rglob('*.jpg')
+    img_list = [str(img) for img in img_list]
 
     save_analysis_dir = args.save_analysis_dir
+    # _, _, _, _, projectloader, testloader, _, classes = get_shared_loaders(args)
+    _, _, _, _, projectset, testset, _, classes, _, _, targets = get_shared_loaders(args)
+
     for img in img_list:
         # note that there are images that are only in gray scale from the test-set. 
         #try:
@@ -468,7 +455,9 @@ def analyze(opt: Optional[List[str]]) -> None:
                         proto_info_dir, vis_count, 
                         save_analysis_dir,args.data_test,
                         transforms_train_test,
-                        prototype_img_identity,protoc_info)
+                        prototype_img_identity,protoc_info,
+                        class_mappings=testset.class_to_idx, 
+                        args=args)
         #except:
             #pass
         print()

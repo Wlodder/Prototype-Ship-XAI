@@ -1,6 +1,29 @@
 import torch
+from torch import nn
 import torch.nn.functional as F
+import numpy as np
 
+def calculate_loss_with_crp( pooled, crp_allocation, rare_feature_weight=1.0):
+    
+    # Add CRP-inspired rare feature loss
+    # Get importance weights based on rarity
+    # importance_weights = crp_allocation.get_importance_weights()
+    
+    # Compute diversity loss based on current prototype usage distribution
+    usage_dist = crp_allocation.prototype_counts / crp_allocation.total_count
+    target_dist = usage_dist.pow(-0.5)  # Power-law transformation
+    target_dist = target_dist / target_dist.sum()  # Normalize
+    
+    # KL divergence encouraging uniform prototype usage
+    diversity_loss = F.kl_div(
+        F.log_softmax(pooled.mean(dim=0).unsqueeze(0), dim=1),
+        target_dist.unsqueeze(0),
+        reduction='batchmean'
+    )
+    
+    return rare_feature_weight * diversity_loss
+
+# Bio inspired losses
 def budget_loss(head: "CompetingHead",
                 lmb_budget: float = 1e-4) -> torch.Tensor:
     """
@@ -33,20 +56,7 @@ def sharing_loss(head: "CompetingHead",
     overlap = w.sum(dim=1)                      # (C, D)
     return lmb_share * (overlap ** p).mean()    # mean over (C, D)
 
-
-def prototype_utilization_penalty(model, pooled, strength=0.1, target_utilization=0.7):
-    """Force model to use more prototypes by penalizing under-utilization"""
-    # Count how many prototypes are meaningfully activated per sample
-    meaningful_activations = (pooled > 0.1).float()
-    
-    # Calculate fraction of prototypes used per sample
-    utilization_fraction = meaningful_activations.sum(dim=1) / pooled.size(1)
-    
-    # Penalize samples using too few prototypes (below target)
-    penalty = torch.mean(torch.relu(target_utilization - utilization_fraction))
-    
-    return strength * penalty
-
+## Uniformity loss
 def coral_loss(pooled, target_scale=1.0):
     B, D = pooled.shape
     # 1) center
@@ -60,7 +70,6 @@ def coral_loss(pooled, target_scale=1.0):
     loss = torch.norm(C - C_target, p='fro')**2
     return loss
 
-import torch.nn.functional as F
 
 def gaussian_kernel(x, y, sigma=1.0):
     # x,y: [B×D], returns [B×B]
@@ -73,11 +82,62 @@ def mmd_loss(pooled, ref, sigma=1.0):
     Kxy = gaussian_kernel(pooled, ref, sigma)
     return Kxx.mean() + Kyy.mean() - 2*Kxy.mean()
 
-
+def robust_emd_loss(pooled, alpha=0.2, beta=0.2, threshold=0.1, epsilon=1e-6):
+    """
+    Numerically stable implementation of Earth Mover's Distance loss
+    with beta distribution target
+    """
+    batch_size, num_prototypes = pooled.shape
+    
+    # 1. Compute activation frequency with smoothing to avoid zeros
+    act_freq = (pooled > threshold).float().mean(dim=0) + epsilon
+    act_freq = act_freq / act_freq.sum()  # Re-normalize
+    
+    # 2. Generate target beta distribution - robust version
+    x = torch.linspace(epsilon, 1-epsilon, num_prototypes, device=pooled.device)
+    
+    # 3. Clip alpha/beta to avoid extreme values
+    alpha_safe = max(0.05, alpha)
+    beta_safe = max(0.05, beta)
+    
+    # 4. Compute PDF values directly without beta function
+    # Note: We don't need exact normalization since we normalize again after
+    log_pdf = (alpha_safe-1)*torch.log(x) + (beta_safe-1)*torch.log(1-x)
+    target_dist = torch.exp(log_pdf - log_pdf.max())  # Subtract max for numerical stability
+    target_dist = target_dist / (target_dist.sum() + epsilon)
+    
+    # 5. Sort distributions (required for 1D Wasserstein distance)
+    sorted_act_freq, _ = torch.sort(act_freq)
+    sorted_target, _ = torch.sort(target_dist)
+    
+    # 6. Compute EMD with careful cumulative sum
+    cdf_actual = torch.cumsum(sorted_act_freq, dim=0)
+    cdf_target = torch.cumsum(sorted_target, dim=0)
+    
+    # 7. Add checks against NaN
+    if torch.isnan(cdf_actual).any() or torch.isnan(cdf_target).any():
+        print("Warning: NaN in CDFs before EMD calculation")
+        # Fall back to a simpler loss
+        return torch.tensor(1.0, device=pooled.device, requires_grad=True)
+    
+    emd = torch.abs(cdf_actual - cdf_target).mean()
+    
+    # 8. Add minimum activation constraint (ensures each prototype is used)
+    min_act = 1.0 / batch_size  # At least one activation per batch
+    min_act_penalty = torch.relu(min_act - act_freq).sum()
+    
+    # 9. Final safety check
+    final_loss = emd + min_act_penalty
+    if torch.isnan(final_loss):
+        print("Warning: NaN in final EMD loss")
+        return torch.tensor(1.0, device=pooled.device, requires_grad=True)
+        
+    return final_loss
 
 def calculate_loss(proto_features, pooled, out, ys1, align_pf_weight, t_weight, unif_weight, cl_weight,
                     net_normalization_multiplier, pretrain, finetune, 
                     criterion, train_iter, shared_features_loss=True, print=True, EPS=1e-10):
+
     ys = torch.cat([ys1,ys1])
     pooled1, pooled2 = pooled.chunk(2)
     pf1, pf2 = proto_features.chunk(2)
@@ -110,6 +170,7 @@ def calculate_loss(proto_features, pooled, out, ys1, align_pf_weight, t_weight, 
     u2 = ((m2 - target) ** 2).mean()
     
 
+    emd_loss= 0.5 * robust_emd_loss(pooled1, alpha=0.2, beta=0.2, threshold=0.1)
 
 
     uni_proto_loss = 0.5 * (u1 + u2)
@@ -150,7 +211,8 @@ def calculate_loss(proto_features, pooled, out, ys1, align_pf_weight, t_weight, 
         uni_loss = (uniform_loss(F.normalize(pooled1+EPS,dim=1)) + uniform_loss(F.normalize(pooled2+EPS,dim=1)))/2.
         loss += unif_weight * uni_loss
 
-    loss += 1e-4 * uni_proto_loss 
+    # loss += 1e-4 * emd_loss
+    # loss += 1e-4 * uni_proto_loss 
     # loss += c_loss * 1e-4
     # loss += mmd_l * 1e-4
     acc=0.

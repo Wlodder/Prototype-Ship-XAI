@@ -10,6 +10,7 @@ from util.eval_cub_csv import eval_prototypes_cub_parts_csv, get_topk_cub, get_p
 import torch
 from util.vis_pipnet import visualize, visualize_topk
 from util.visualize_prediction import vis_pred, vis_pred_experiments
+from prototype_squared.adaptive import AdaptivePrototypeRotation, replace_classification_with_rotation
 import sys, os
 import random
 import numpy as np
@@ -70,6 +71,7 @@ def run_pipnet(args=None):
     
     # Create a convolutional network based on arguments and add 1x1 conv layer
     feature_net, add_on_layers, pool_layer, classification_layer, num_prototypes = get_network(len(classes), args)
+
    
     # Create a PIP-Net
     net = PIPNet(num_classes=len(classes),
@@ -80,9 +82,10 @@ def run_pipnet(args=None):
                     pool_layer = pool_layer,
                     classification_layer = classification_layer
                     )
+    
     net = net.to(device=device)
     net = nn.DataParallel(net, device_ids = device_ids)    
-    
+
     optimizer_net, optimizer_classifier, params_to_freeze, params_to_train, params_backbone = get_optimizer_nn(net, args)   
 
     # Initialize or load model
@@ -117,6 +120,7 @@ def run_pipnet(args=None):
             net.module._multiplier.requires_grad = False
 
             print("Classification layer initialized with mean", torch.mean(net.module._classification.weight).item())
+
     
     # Define classification loss function and scheduler
     criterion = nn.NLLLoss(reduction='mean').to(device)
@@ -244,11 +248,11 @@ def run_pipnet(args=None):
         lrs_classifier+=train_info['lrs_class']
         # Evaluate model
 
-        if epoch % args.eval_epoch_interval == 0 and epoch != args.epochs - 1:
-            net.eval()
-            with torch.no_grad():
-                eval_info = eval_pipnet(net, testloader, epoch, device, log)
-                log.log_values('log_epoch_overview', epoch, eval_info['top1_accuracy'], eval_info['top5_accuracy'], eval_info['almost_sim_nonzeros'], eval_info['local_size_all_classes'], eval_info['almost_nonzeros'], eval_info['num non-zero prototypes'], train_info['train_accuracy'], train_info['loss'])
+        # if epoch % args.eval_epoch_interval == 0 and epoch != args.epochs - 1:
+        #     net.eval()
+        #     with torch.no_grad():
+        #         eval_info = eval_pipnet(net, testloader, epoch, device, log)
+        #         log.log_values('log_epoch_overview', epoch, eval_info['top1_accuracy'], eval_info['top5_accuracy'], eval_info['almost_sim_nonzeros'], eval_info['local_size_all_classes'], eval_info['almost_nonzeros'], eval_info['num non-zero prototypes'], train_info['train_accuracy'], train_info['loss'])
             
         with torch.no_grad():
             net.eval()
@@ -327,9 +331,9 @@ def run_pipnet(args=None):
     #     eval_prototypes_cub_parts_csv(csvfile_all, parts_loc_path, parts_name_path, imgs_id_path, 'test_all_thres'+str(cubthreshold)+'_'+str(epoch), args, log)
         
     # visualize predictions 
-    visualize(net, projectloader, len(classes), device, 'visualised_prototypes', args)
-    testset_img0_path = test_projectloader.dataset.samples[0][0]
-    test_path = os.path.split(os.path.split(testset_img0_path)[0])[0]
+    # visualize(net, projectloader, len(classes), device, 'visualised_prototypes', args)
+    # testset_img0_path = test_projectloader.dataset.samples[0][0]
+    # test_path = os.path.split(os.path.split(testset_img0_path)[0])[0]
     # vis_pred(net, test_path, classes, device, args) 
     # if args.extra_test_image_folder != '':
     #     if os.path.exists(args.extra_test_image_folder):   

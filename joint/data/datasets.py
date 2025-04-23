@@ -52,7 +52,7 @@ def undo_preprocess_input_function(x):
     return undo_preprocess(x, mean=mean, std=std)
 
 normalize = transforms.Normalize(mean=mean,std=std)
-img_size = 224
+img_size = 256
 train_transformation = transforms.Compose([
     transforms.ToTensor(),
     RangeChange(),
@@ -80,9 +80,9 @@ train_push_transformation = transforms.Compose([
 
 def create_datasets():
 
-    train_dir = os.environ['TRAIN_MMARVEL_PATH']
-    train_push_dir = os.environ['PUSH_MMARVEL_PATH']
-    test_dir = os.environ['TEST_MMARVEL_PATH']
+    train_dir = os.environ['TRAIN_JANES_MARVEL_PATH']
+    train_push_dir = os.environ['TEST_JANES_MARVEL_PATH']
+    test_dir = os.environ['TEST_JANES_MARVEL_PATH']
 
     train_dataset = datasets.ImageFolder(train_dir, train_transformation)
     test_dataset = datasets.ImageFolder(test_dir, test_transformation)

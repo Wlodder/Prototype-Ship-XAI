@@ -11,6 +11,7 @@ import numpy as np
 from prototype_squared import attribution
 from util.vis_pipnet import  visualize_prototypes, visualize_prototype
 from scipy.stats import beta
+from util.evaluate_janes import check_prototype_locations
 
 def split_and_merge_prototypes(args=None):
     """
@@ -60,6 +61,35 @@ def split_and_merge_prototypes(args=None):
         for example_prototype in range(args.num_features):
             visualize_prototype(net, test_projectloader, len(classes), device, f'visualised_prototypes_represent',
                                 args, prototype=example_prototype)
+
+    protos_to_check = []
+    # Check prototype locations
+    if args.check_prototype_locations:
+        print("Checking prototype locations...")
+        img_stats = check_prototype_locations(
+            net,
+            device,
+            args,
+        )
+
+
+
+        # Check the top overlaps for each image
+        classification_weights = net.module._classification.weight
+        for stat in img_stats:
+            for gt_idx in stat.top_overlaps.keys():
+                print(f"GT {gt_idx}: {stat.top_overlaps[gt_idx]}")
+                for gt in stat.top_overlaps[gt_idx]:
+                    for overlap in gt:
+                        proto_overlap = overlap[0]
+                        overlap_score = overlap[1]['box_overlap']
+                        activation = overlap[1]['activation']
+                        c_weight = torch.max(classification_weights[:,proto_overlap]) #ignore prototypes that are not relevant to any class
+                        if overlap_score > 0.1 and activation > 0.1 and c_weight > 0.01:
+                            print(f"Proto {proto_overlap}: {overlap_score}, Activation: {activation}")
+                            protos_to_check.append(proto_overlap)
+
+    protos_to_check = list(set(protos_to_check))
     # Initialize PrototypeManager
     prototype_manager = PrototypeManager(net, device=device)
     
@@ -72,15 +102,23 @@ def split_and_merge_prototypes(args=None):
     # prototype_indices  = prototype_indices + [[3,22]]
     random_samples = 2
 
-    prototype_indices = [[57,59],[51,68],[22]]
+
+    prototype_indices = []
+    final_pos = 0
+    group_size=1
+    for i in range(0,len(protos_to_check),group_size):
+        prototype_indices.append(protos_to_check[i:i+group_size])
+        final_pos = i
+    prototype_indices.append(protos_to_check[final_pos:])
+    
     # for i in range(random_samples):
     #     prototype_indices.append(list(np.random.randint(0, args.num_features, size=(3))))
     # prototype_indices  = [[3,22,102,103]]#, 135, 140]] 
     # prototype_indices  = [[5,6,7,8,9],[10,11,12,13,14],[15,16,17,18,19],[20,21,22,23,24],[25,26,27,28,29],[30,31,32,33,34],[35,36,37,38,39],[40,41,42,43]]
-    example_prototypes = set()
+    # example_prototypes = set()
     # prototype_indices  = [[0],[0,1],[0,1,2],[0,1,2,3]]
-    for i in range(len(prototype_indices)):
-        example_prototypes = example_prototypes.union(set(prototype_indices[i]))
+    # for i in range(len(prototype_indices)):
+    #     example_prototypes = example_prototypes.union(set(prototype_indices[i]))
 
 
     # print(f"Visualizing prototypes...{example_prototypes}")
@@ -91,6 +129,7 @@ def split_and_merge_prototypes(args=None):
     #     prototype_indices.append(list(np.random.choice(args.num_features, size=(5), replace=False)))
     # prototype_indices  = [[3,22]]
     print(f"Analyzing {len(prototype_indices)} prototypes: {prototype_indices}")
+    save_dir = os.path.join(os.path.join(args.log_dir, args.dir_for_saving_images),"pure_prototypes")
     
     # Step 2: Split polysemantic prototypes
     if args.split_prototypes:
@@ -126,7 +165,7 @@ def split_and_merge_prototypes(args=None):
             visualize=args.visualize_results,
             algorithm=args.clustering_algorithm,  # Use the specified clustering algorithm
             layer_weights=layer_weights,
-            output_path=args.output_path
+            output_path=save_dir
         )
 
         # We return the new cluster centroids, for each level and place the centroids into a new model
@@ -225,6 +264,8 @@ if __name__ == "__main__":
                         help='Number of samples to show per prototype in visualizations')
     parser.add_argument('--vis_max_prototypes', type=int, default=50,
                         help='Maximum number of prototypes to visualize')
+    parser.add_argument('--check_prototype_locations', action='store_true', default=True,
+                        help='Do we want to evaluate which prototpyes are useful?')
     
     # Get default PIPNet arguments
     args = get_args(parser)
