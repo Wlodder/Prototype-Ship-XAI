@@ -9,3 +9,12 @@ TesNet-Concept_final/__pycache__/*
 TesNet-Concept_final/models/*
 TesNet-Concept_final/pretrained_models/*
 TesNet-Concept_final/saved_models/*
+joint/__pycache__/__init__.cpython-39.pyc
+PIPNet/features/__pycache__/*
+PIPNet/pretrained_models/*
+PIPNet/models/*
+PIPNet/runs/*
+PIPNet/util/__pycache__/*
+PIPNet/*.js
+PIPNet/*.html
+PIPNet/prototype_*_visualizations
