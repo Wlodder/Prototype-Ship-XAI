@@ -2,3 +2,4 @@ scikit-learn
 pandas
 matplotlib
 opencv-python
+tensorboard

@@ -21,7 +21,7 @@ SUBJECT_DIR=${NET}_${EPOCHS_PRETRAIN}_${EPOCHS_TRAIN}_${NUM_FEATURES}_${BATCH_SI
 
 # Create log dir and image dir
 LOGDIR=$PIPNET_PROTO_DIR/$SUBJECT_DIR/log
-IMGDIR=$PIPNET_PROTO_DIR/$SUBJECT_DIR/img_dir
+IMGDIR=$PIPNET_PROTO_DIR/$DATA_DIRECTORY/$SUBJECT_DIR/img_dir
 CHECKPOINT=$LOGDIR/checkpoints/$FILENAME
 
 mkdir -p $LOGDIR
@@ -39,6 +39,6 @@ python $PIPNET_RUNDIR/merger.py --dataset "Janes_Military_Marvel" --net $NET --b
   --extra_test_image_folder $SUGGESTION_JANES_MARVEL_PATH --proto_dir $LOGDIR --num_workers 4\
   --buffer_type buffer:35 --k 45 --patch_size 32 --state_dict_dir_net $CHECKPOINT\
   --debug --prototype_indices 3 30 69 73\
-  --split_prototypes --apply_splitting --similarity_type feature\
+  --apply_splitting --similarity_type feature\
   --visualize_results --splitting_scale 0.000005 --clustering_algorithm "hdbscan_kmeans" -a $A -b $B --output_path ${A}_${B}\
-  --check_prototype_locations #--analyze_all_prototypes 
+  --check_prototype_locations #--split_prototype #--analyze_all_prototypes 

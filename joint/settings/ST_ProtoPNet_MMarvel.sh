@@ -13,16 +13,21 @@ PROTOTYPE_ACTIVATION_FUNCTION="log"
 # Data and paths
 BATCH_SIZE=80
 
+# Prototypes % classes == 0
+if [ $N_CLASSES -lt 40 ]; then
+    NUM_PROTOTYPES=$((N_CLASSES * 35))
+else
+    NUM_PROTOTYPES=$((N_CLASSES * 20))
+fi
 # Prototypes
-NUM_PROTOTYPES=75
-PROTO_DEPTH=256
+PROTO_DEPTH=512
 NUM_DESCRIPTIVE=10
 K=10
 
 # Epoch and training
 # warmup epochs must be less than the total number of epochs
-WARMUP_EPOCHS=4
-EPOCH=5
+WARMUP_EPOCHS=15
+EPOCH=45
 
 # Losses
 CAPALL=True
@@ -41,13 +46,3 @@ python $STPROTOPNET_RUNDIR/main.py --num_classes $N_CLASSES --train_batch_size $
      --cap_width $CAPCOEF --model_dir $RESULTS_PATH --num_prototypes $NUM_PROTOTYPES 
       # --gpuid 0 
    #   --k $K \
-
-MODEL_PATH=$(find $RESULTS_PATH -name *.pth | grep final)
-SAVE_DIR=$RESULTS_PATH/local_analysis/
-VIS_PATH=$(dirname $(find $RESULTS_PATH -name *npy))
-echo $VIS_PATH
-python $STPROTOPNET_RUNDIR/local_analysis.py --data_train $TRAIN_PATH --data_push $PUSH_PATH --data_test $TEST_PATH --model_dir $MODEL_PATH \
- --batch_size $BATCH_SIZE --num_descriptive $NUM_DESCRIPTIVE --num_prototypes $NUM_PROTOTYPES \
-  --num_classes $N_CLASSES --arch $MODEL --gpuid 0 --pretrained --proto_depth $PROTO_DEPTH \
-   --prototype_activation_function $PROTOTYPE_ACTIVATION_FUNCTION --last_layer --use_thresh --capl $CAPL \
-   --save_analysis_dir $SAVE_DIR --target_img_dir $TEST_PATH --prototype_img_dir $VIS_PATH
