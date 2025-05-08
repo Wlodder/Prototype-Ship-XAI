@@ -1,10 +1,10 @@
 #!/bin/bash
 # general settings
-NUM_FEATURES=$1
-DROPOUT=$3
+NUM_FEATURES=800
 SEED=1234
-FILENAME=$4
-BATCH_SIZE=$2
+FILENAME=$1
+BATCH_SIZE=24
+DROPOUT=0.0
 BATCH_SIZE_PRETRAIN=32
 NET="convnext_tiny_26"
 EPOCHS_PRETRAIN=6
@@ -17,7 +17,7 @@ K=15
 BUFFER_SIZE=6
 TYPE='folder'
 
-SUBJECT_DIR=${NET}_${EPOCHS_PRETRAIN}_${EPOCHS_TRAIN}_${NUM_FEATURES}_${BATCH_SIZE}_${BATCH_SIZE_PRETRAIN}_${IMAGE_SIZE}/${JANES_EXPERIMENT_DIRECTORY}/${K}_${BUFFER_SIZE}_${DROPOUT}_main
+SUBJECT_DIR=${NET}_${EPOCHS_PRETRAIN}_${EPOCHS_TRAIN}_${NUM_FEATURES}_${BATCH_SIZE}_${BATCH_SIZE_PRETRAIN}_${IMAGE_SIZE}/PIPNet_squared/${JANES_EXPERIMENT_DIRECTORY}/${K}_${BUFFER_SIZE}_${DROPOUT}_main
 
 # Create log dir and image dir
 LOGDIR=$PIPNET_PROTO_DIR/$SUBJECT_DIR/log
@@ -41,4 +41,6 @@ python $PIPNET_RUNDIR/merger.py --dataset "Janes_Military_Marvel" --net $NET --b
   --debug --prototype_indices 3 30 69 73\
   --apply_splitting --similarity_type feature\
   --visualize_results --splitting_scale 0.000005 --clustering_algorithm "hdbscan_kmeans" -a $A -b $B --output_path ${A}_${B}\
-  --check_prototype_locations #--split_prototype #--analyze_all_prototypes 
+  --split_prototype 
+  # --check_prototype_locations #--split_prototype #--analyze_all_prototypes 
+  # --analyze_all_prototypes\

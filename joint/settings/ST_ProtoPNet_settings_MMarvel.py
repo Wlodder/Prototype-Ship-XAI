@@ -25,11 +25,12 @@ def get_args():
     parser.add_argument('--num_warm_epochs',default= 5, type=int)
     parser.add_argument('--push_epochs',default= 5, type=int)
 
-    parser.add_argument('--push_start',default= 10, type=int)
+    parser.add_argument('--push_start',default= 1, type=int)
     parser.add_argument('--analysis_start',default= 0, type=int)
 
     parser.add_argument('--model_dir')
     parser.add_argument('--gpuid',default= 0, type=str)
+    parser.add_argument('--model_weights',default= None, type=str)
 
     return parser
 

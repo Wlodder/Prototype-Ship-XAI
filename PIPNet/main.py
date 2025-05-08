@@ -1,4 +1,4 @@
-from pipnet.pipnet import PIPNet, get_network
+from pipnet.pipnet import PIPNet, get_network, CRPPIPNet
 from util.log import Log
 import torch.nn as nn
 from util.args import get_args, save_args, get_optimizer_nn
@@ -8,7 +8,7 @@ from pipnet.train import train_pipnet
 from pipnet.test import eval_pipnet, get_thresholds, eval_ood
 from util.eval_cub_csv import eval_prototypes_cub_parts_csv, get_topk_cub, get_proto_patches_cub
 import torch
-from util.vis_pipnet import visualize, visualize_topk
+from util.vis_pipnet import visualize, visualize_topk, visualize_prototype_with_spatial_maps
 from util.visualize_prediction import vis_pred, vis_pred_experiments
 from prototype_squared.adaptive import AdaptivePrototypeRotation, replace_classification_with_rotation
 import sys, os
@@ -74,14 +74,26 @@ def run_pipnet(args=None):
 
    
     # Create a PIP-Net
-    net = PIPNet(num_classes=len(classes),
-                    num_prototypes=num_prototypes,
-                    feature_net = feature_net,
-                    args = args,
-                    add_on_layers = add_on_layers,
-                    pool_layer = pool_layer,
-                    classification_layer = classification_layer
-                    )
+    if args.crp:
+        net = CRPPIPNet(num_classes=len(classes),
+                        num_prototypes=num_prototypes,
+                        feature_net = feature_net,
+                        args = args,
+                        add_on_layers = add_on_layers,
+                        pool_layer = pool_layer,
+                        classification_layer = classification_layer,
+                        alpha=args.alpha,
+                        beta=args.beta,
+                        )
+    else:
+        net = PIPNet(num_classes=len(classes),
+                        num_prototypes=num_prototypes,
+                        feature_net = feature_net,
+                        args = args,
+                        add_on_layers = add_on_layers,
+                        pool_layer = pool_layer,
+                        classification_layer = classification_layer
+                        )
     
     net = net.to(device=device)
     net = nn.DataParallel(net, device_ids = device_ids)    
@@ -107,9 +119,6 @@ def run_pipnet(args=None):
                 print("Classification layer initialized with mean", torch.mean(net.module._classification.weight).item())
                 if args.bias:
                     torch.nn.init.constant_(net.module._classification.bias, val=0.)
-            # else: #uncomment these lines if you want to load the optimizer too
-            #     if 'optimizer_classifier_state_dict' in checkpoint.keys():
-            #         optimizer_classifier.load_state_dict(checkpoint['optimizer_classifier_state_dict'])
             
         else:
             net.module._add_on.apply(init_weights_xavier)
@@ -172,9 +181,10 @@ def run_pipnet(args=None):
         net.eval()
         torch.save({'model_state_dict': net.state_dict(), 'optimizer_net_state_dict': optimizer_net.state_dict()}, os.path.join(os.path.join(args.log_dir, 'checkpoints'), 'net_pretrained'))
         net.train()
-    with torch.no_grad():
-        if 'convnext' in args.net and args.epochs_pretrain > 0:
-            topks = visualize_topk(net, projectloader, len(classes), device, 'visualised_pretrained_prototypes_topk', args)
+
+    # with torch.no_grad():
+    #     if 'convnext' in args.net and args.epochs_pretrain > 0:
+    #         topks = visualize_topk(net, projectloader, len(classes), device, 'visualised_pretrained_prototypes_topk', args)
         
     # SECOND TRAINING PHASE
     # re-initialize optimizers and schedulers for second training phase
@@ -278,6 +288,11 @@ def run_pipnet(args=None):
     log.log_values('log_epoch_overview', epoch, eval_info['top1_accuracy'], eval_info['top5_accuracy'], eval_info['almost_sim_nonzeros'], eval_info['local_size_all_classes'], eval_info['almost_nonzeros'], eval_info['num non-zero prototypes'], train_info['train_accuracy'], train_info['loss'])
 
     topks = visualize_topk(net, projectloader, len(classes), device, 'visualised_prototypes_topk', args)
+    
+    # Also visualize with spatial maps
+    print("Visualizing prototypes with spatial activation maps...")
+    visualize_prototype_with_spatial_maps(net, projectloader, len(classes), device, 'visualised_prototypes_with_spatial_maps', args)
+    
     # set weights of prototypes that are never really found in projection set to 0
     set_to_zero = []
     if topks:

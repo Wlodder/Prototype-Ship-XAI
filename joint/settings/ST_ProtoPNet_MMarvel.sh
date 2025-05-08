@@ -17,17 +17,17 @@ BATCH_SIZE=80
 if [ $N_CLASSES -lt 40 ]; then
     NUM_PROTOTYPES=$((N_CLASSES * 35))
 else
-    NUM_PROTOTYPES=$((N_CLASSES * 20))
+    NUM_PROTOTYPES=$((N_CLASSES * 15))
 fi
 # Prototypes
-PROTO_DEPTH=512
+PROTO_DEPTH=256
 NUM_DESCRIPTIVE=10
 K=10
 
 # Epoch and training
 # warmup epochs must be less than the total number of epochs
 WARMUP_EPOCHS=15
-EPOCH=45
+EPOCH=35
 
 # Losses
 CAPALL=True
@@ -45,6 +45,7 @@ RESULTS_PATH=$STPROTOPNET_RESULTS_DIR/STProtoPNet/${DATASET_NAME}/${PROTO_DEPTH}
 python $STPROTOPNET_RUNDIR/main.py --num_classes $N_CLASSES --train_batch_size $BATCH_SIZE --test_batch_size $BATCH_SIZE \
    --proto_depth $PROTO_DEPTH --base_architecture $MODEL --num_warm_epochs $WARMUP_EPOCHS \
   --prototype_activation_function $PROTOTYPE_ACTIVATION_FUNCTION --num_train_epochs $EPOCH \
-     --cap_width $CAPCOEF --model_dir $RESULTS_PATH --num_prototypes $NUM_PROTOTYPES 
+     --cap_width $CAPCOEF --model_dir $RESULTS_PATH --num_prototypes $NUM_PROTOTYPES \
+     --push_epochs 25 --push_start 25
       # --gpuid 0 
    #   --k $K \

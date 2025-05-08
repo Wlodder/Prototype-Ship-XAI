@@ -121,40 +121,8 @@ class CRPPrototypeAllocation(nn.Module):
         }
 
 
-class CompetingHead(nn.Module):
-    """
-    One weight matrix per hypothesis; best hypothesis wins (max‑pool).
-    weight : (C, H, D)   C = classes, H = hypotheses, D = prototypes
-    """
-    def __init__(self, num_classes: int,
-                 num_prototypes: int,
-                 num_hypotheses: int = 3,
-                 normalization_multiplier: float = 1.0):
-        super().__init__()
-        self.weight = nn.Parameter(
-            0.01 * torch.randn(num_classes, num_hypotheses, num_prototypes))
-        self.normalization_multiplier = normalization_multiplier
-        self._num_hyp = num_hypotheses
 
-    def forward(self, pooled):
-        # Original code
-        logits = torch.einsum('bd,chd->bch', pooled, self.weight)
-        
-        # Add competition between heads
-        # Each head gets to "claim" certain prototypes more strongly
-        prototype_importance = torch.softmax(self.weight.abs().sum(dim=0), dim=0)  # (H, D)
-        
-        # Scale prototypes by their importance to each head
-        scaled_pooled = pooled.unsqueeze(1) * prototype_importance  # (B, H, D)
-        
-        # Use scaled pooled values for each head
-        head_logits = torch.einsum('bhd,chd->bch', scaled_pooled, self.weight)
-        
-        # Max over hypotheses as before
-        logits, _ = head_logits.max(dim=2)
-        return logits * self.normalization_multiplier
-
-class PIPNet(nn.Module):
+class CRPPIPNet(nn.Module):
     def __init__(self,
                  num_classes: int,
                  num_prototypes: int,
@@ -163,7 +131,8 @@ class PIPNet(nn.Module):
                  add_on_layers: nn.Module,
                  pool_layer: nn.Module,
                  classification_layer: nn.Module,
-                 dropout: float = 0.7,
+                 alpha=8,
+                 beta=0.3
                  ):
         super().__init__()
         assert num_classes > 0
@@ -176,13 +145,11 @@ class PIPNet(nn.Module):
         # old classifcation 
         self._classification = classification_layer
         self._multiplier = classification_layer.normalization_multiplier
+        self.alpha = alpha
+        self.beta = beta
 
         # Diriclet allocation
-        self.crp_allocation = CRPPrototypeAllocation(self._num_features, alpha=8, beta=0.3, device='cuda')
-
-        # Head clasification
-        # self._num_hypotheses = 16
-        # self._classification = CompetingHead(num_classes, num_prototypes, num_hypotheses=self._num_hypotheses)
+        self.allocation = CRPPrototypeAllocation(self._num_features, alpha=alpha, beta=beta, device='cuda')
 
     def forward(self, xs,  inference=False, features_save=False):
         features = self._net(xs) 
@@ -201,14 +168,67 @@ class PIPNet(nn.Module):
                 return proto_features, clamped_pooled, out, features
             return proto_features, clamped_pooled, out
         else:
-            self.crp_allocation.update_allocation(pooled)
-            weighted_pooled = self.crp_allocation(pooled)
+            self.allocation.update_allocation(pooled)
+            weighted_pooled = self.allocation(pooled)
             out = self._classification(weighted_pooled) #shape (bs*2, num_classes) 
 
             if features_save:
                 return proto_features, weighted_pooled, out, features
 
             return proto_features, weighted_pooled, out
+
+    def extract_features(self, xs,  inference=False, features_save=False):
+        features = self._net(xs) 
+        proto_features = self._add_on(features)
+        pooled = self._pool(proto_features)
+        return proto_features, pooled, features
+
+class PIPNet(nn.Module):
+    def __init__(self,
+                 num_classes: int,
+                 num_prototypes: int,
+                 feature_net: nn.Module,
+                 args: argparse.Namespace,
+                 add_on_layers: nn.Module,
+                 pool_layer: nn.Module,
+                 classification_layer: nn.Module,
+                 ):
+        super().__init__()
+        assert num_classes > 0
+        self._num_features = args.num_features
+        self._num_classes = num_classes
+        self._num_prototypes = num_prototypes
+        self._net = feature_net
+        self._add_on = add_on_layers
+        self._pool = pool_layer
+        # old classifcation 
+        self._classification = classification_layer
+        self._multiplier = classification_layer.normalization_multiplier
+
+
+    def forward(self, xs,  inference=False, features_save=False):
+        features = self._net(xs) 
+        
+        proto_features = self._add_on(features)
+        pooled = self._pool(proto_features)
+
+        
+
+        if inference:
+            pooled = pooled.double()
+            clamped_pooled = torch.where(pooled < 0.1, 0., pooled)  #during inference, ignore all prototypes that have 0.1 similarity or lower
+            clamped_pooled = clamped_pooled.float()
+            out = self._classification(clamped_pooled) #shape (bs*2, num_classes)
+            if features_save:
+                return proto_features, clamped_pooled, out, features
+            return proto_features, clamped_pooled, out
+        else:
+            out = self._classification(pooled) #shape (bs*2, num_classes) 
+
+            if features_save:
+                return proto_features, pooled, out, features
+
+            return proto_features, pooled, out
 
     def extract_features(self, xs,  inference=False, features_save=False):
         features = self._net(xs) 

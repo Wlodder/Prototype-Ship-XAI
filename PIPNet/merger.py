@@ -44,7 +44,7 @@ def split_and_merge_prototypes(args=None):
     if args.state_dict_dir_net != '':
         print(f"Loading pretrained model from {args.state_dict_dir_net}")
         checkpoint = torch.load(args.state_dict_dir_net, map_location=device)
-        net.load_state_dict(checkpoint['model_state_dict'], strict=True)
+        net.load_state_dict(checkpoint['model_state_dict'], strict=False)
     else:
         raise ValueError("Please provide a pretrained model using --state_dict_dir_net")
 
@@ -89,7 +89,17 @@ def split_and_merge_prototypes(args=None):
                             print(f"Proto {proto_overlap}: {overlap_score}, Activation: {activation}")
                             protos_to_check.append(proto_overlap)
 
-    protos_to_check = list(set(protos_to_check))
+    # For the full set to check
+    protos_to_check = [2,7,12,13,24,25,39,48,61,77,93,100,104,108,109,169,
+                         175,177,183,201,208,219,224,232,242,244,247,257,269,
+                         279,288,292,316,339,344,358,384,385,219,389,391,397,405,407,
+                         425,427,439,449,461,480,481,489,500,501,537,552,574,
+                         590,611,618,623,649,660,668,694,703,704,706,710,740,
+                         751,754]
+    
+    # For the janes set to check
+    protos_to_check = [27, 29, 130, 133,137,158,307,337,476, 91, 89, 155, 170]
+    protos_to_check = list(set(protos_to_check)) if protos_to_check != [] else list(range(args.num_features))
     # Initialize PrototypeManager
     prototype_manager = PrototypeManager(net, device=device)
     
@@ -230,10 +240,6 @@ if __name__ == "__main__":
     parser.add_argument('--clustering_algorithm', type=str, default='kmeans',
                         choices=['kmeans', 'hdbscan', 'gmm', 'spectral','hdbscan_kmeans'],
                         help='Clustering algorithm to use for prototype splitting')
-    parser.add_argument('--use_adaptive_expansion', action='store_true', default=True,
-                        help='Use adaptive step size when expanding prototypes')
-    parser.add_argument('--use_manifold_projection', action='store_true', default=True,
-                        help='Project new prototypes onto the prototype manifold')
     
     # Merging options
     parser.add_argument('--merge_prototypes', action='store_true',
@@ -264,7 +270,7 @@ if __name__ == "__main__":
                         help='Number of samples to show per prototype in visualizations')
     parser.add_argument('--vis_max_prototypes', type=int, default=50,
                         help='Maximum number of prototypes to visualize')
-    parser.add_argument('--check_prototype_locations', action='store_true', default=True,
+    parser.add_argument('--check_prototype_locations', action='store_true', default=False,
                         help='Do we want to evaluate which prototpyes are useful?')
     
     # Get default PIPNet arguments

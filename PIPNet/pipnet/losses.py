@@ -148,44 +148,7 @@ def calculate_loss(proto_features, pooled, out, ys1, align_pf_weight, t_weight, 
     a_loss_pf = (align_loss(embv1, embv2.detach())+ align_loss(embv2, embv1.detach()))/2.
     tanh_loss = -(torch.log(torch.tanh(torch.sum(pooled1,dim=0))+EPS).mean() + torch.log(torch.tanh(torch.sum(pooled2,dim=0))+EPS).mean())/2.
 
-    # Barlow like loss
-    B, C = pooled1.shape
-    z1 = (pooled1 - pooled1.mean(0)) / (pooled1.std(0) + EPS)
-    z2 = (pooled2 - pooled2.mean(0)) / (pooled2.std(0) + EPS)
-    C = (z1.T @ z2) / B
-    on_diag  = torch.diagonal(C).add_(-1).pow(2).sum()
-    off_diag = off_diagonal(C).pow(2).sum()
-    bt_loss  = on_diag - off_diag
-
-
-   # marginal uniformity loss (push each proto's batch-mean toward 1/D) - first order
-    B, D = pooled1.shape                 # D = number of prototypes
-    # per-prototype means across the batch
-    m1 = pooled1.mean(dim=0)             # shape [D]
-    m2 = pooled2.mean(dim=0)             # shape [D]
-    # target for each prototype is 1/D
-    target = torch.full_like(m1, 1.0 / D)
-    # L2 toward that target
-    u1 = ((m1 - target) ** 2).mean()
-    u2 = ((m2 - target) ** 2).mean()
     
-
-    emd_loss= 0.5 * robust_emd_loss(pooled1, alpha=0.2, beta=0.2, threshold=0.1)
-
-
-    uni_proto_loss = 0.5 * (u1 + u2)
-
-
-    # Maginal uniformity loss (push each proto's batch-mean toward 1/D) - second order
-    c_loss = 0.5 * (coral_loss(pooled1) + coral_loss(pooled2))
-
-    # inside calculate_loss
-    # draw ref_samples ∼ Uniform on sphere or use a held‑out set
-    ref = torch.randn(B, D)  # e.g. torch.randn(B,D); ref = F.normalize(ref,dim=1)
-    ref = torch.nn.functional.normalize(ref, dim=1).to(device=pooled.device)
-
-
-    mmd_l = 0.5 * (mmd_loss(pooled1, ref) + mmd_loss(pooled2, ref)) / 2
 
     if not finetune:
         loss = align_pf_weight*a_loss_pf

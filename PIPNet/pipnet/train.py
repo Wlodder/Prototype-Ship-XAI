@@ -1,9 +1,10 @@
 from tqdm import tqdm
 import torch.nn.functional as F
+from pipnet.pipnet import CRPPIPNet
 from prototype_squared.adaptive import AdaptivePrototypeRotation, replace_classification_with_rotation
 import numpy as np
 import torch
-from util.vis_pipnet import get_img_coordinates, get_patch_size
+from util.vis_pipnet import get_img_coordinates, get_patch_size, visualize_prototype_with_spatial_maps
 import math
 from PIL import Image
 from pipnet.losses import align_loss, budget_loss, sharing_loss, calculate_loss, calculate_loss_with_crp
@@ -45,11 +46,13 @@ def train_pipnet(net, train_loader, optimizer_net, optimizer_classifier, schedul
         unif_weight = 1.5 #ignored
         t_weight = 5.
         cl_weight = 0.
+        crp_weight = 0
     else:
         align_pf_weight = 10. 
         t_weight = 8.
         unif_weight = 0.
         cl_weight = (epoch/nr_epochs)*2.0
+        crp_weight = ((nr_epochs - epoch)/nr_epochs)
 
     
     print("Align weight: ", align_pf_weight, ", U_tanh weight: ", t_weight, "Class weight:", cl_weight, flush=True)
@@ -75,27 +78,20 @@ def train_pipnet(net, train_loader, optimizer_net, optimizer_classifier, schedul
                                    unif_weight, cl_weight, net.module._classification.normalization_multiplier, 
                                    pretrain, finetune, criterion, train_iter, print=True, EPS=1e-8)
 
-        usage_dist = net.module.crp_allocation.prototype_counts / net.module.crp_allocation.total_count
-        target_dist = usage_dist.pow(-0.5)  # Power-law transformation
-        target_dist = target_dist / target_dist.sum()  # Normalize
-        
-        # KL divergence encouraging uniform prototype usage
-        diversity_loss = F.kl_div(
-            F.log_softmax(pooled.mean(dim=0).unsqueeze(0)+1e-6, dim=1),
-            target_dist.unsqueeze(0),
-            reduction='batchmean'
-        )
-        
-        loss+=  1e-3 * diversity_loss
-        
-        # Mulit head budget losses
-        # head = net.module._classification
-        # budget_weight=1e-2
-        # share_weight=1e-2
-        # budget_l = budget_loss(head, budget_weight)
-        # share_l = sharing_loss(head, share_weight, p=2.0)
-        # loss = loss + budget_l + share_l
-        # Compute the gradient
+        if isinstance(net, CRPPIPNet):
+            usage_dist = net.module.crp_allocation.prototype_counts / net.module.crp_allocation.total_count
+            target_dist = usage_dist.pow(-0.5)  # Power-law transformation
+            target_dist = target_dist / target_dist.sum()  # Normalize
+            
+            # KL divergence 
+            diversity_loss = F.kl_div(
+                F.log_softmax(pooled.mean(dim=0).unsqueeze(0)+1e-6, dim=1),
+                target_dist.unsqueeze(0),
+                reduction='batchmean'
+            )
+            
+            loss+= 1e-4 * diversity_loss * crp_weight
+
         loss.backward()
 
         if not pretrain:
