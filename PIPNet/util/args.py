@@ -164,6 +164,18 @@ def get_args(parser=None) -> argparse.Namespace:
                         type=float,
                         help='amount of prototype dropout')
 
+    parser.add_argument('--alpha',
+                        type=float,
+                        help='CRP new table allocation',
+                        default=6)
+    parser.add_argument('--beta',
+                        type=float,
+                        help='power law transform',
+                        default=0.5)
+    parser.add_argument('--crp',
+                        action='store_true',
+                        help='Are we using CRP?')
+
     args = parser.parse_args()
     if len(args.log_dir.split('/'))>2:
         if not os.path.exists(args.log_dir):

@@ -120,8 +120,10 @@ def check_prototype_locations(net, device, args: argparse.Namespace):
                             normalize])
 
     # vis_test_set = torchvision.datasets.ImageFolder(imgs_dir, transform=transform_no_augment)
-    vis_test_set = SuggestionDataset(os.environ['TEST_JANES_MARVEL_PATH'] + '/*/*.jpg',
-                                     os.environ['TEST_JANES_LABEL_MARVEL_PATH'] + '/*/*.json',transform_no_augment)
+
+    img_path = os.environ.get('CHECK_JSON_LABEL_PATH_TEST', '') + '/*/*.jpg'
+    label_path =  os.environ.get('CHECK_JSON_LABEL_PATH_JSON', '') + '/*/*.json'
+    vis_test_set = SuggestionDataset(img_path, label_path, transform_no_augment)
     vis_test_loader = torch.utils.data.DataLoader(vis_test_set, batch_size = 1,
                                                 shuffle=False, pin_memory=not args.disable_cuda and torch.cuda.is_available(),
                                                 num_workers=num_workers)

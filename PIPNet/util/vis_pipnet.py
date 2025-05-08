@@ -7,6 +7,7 @@ import torch.nn.functional as F
 import torch.utils.data
 import os
 import cv2
+import json
 from PIL import Image, ImageDraw as D
 import torchvision.transforms as transforms
 import torchvision
@@ -790,3 +791,183 @@ def visualize_prototype(net, projectloader, num_classes, device, foldername, arg
                 torchvision.utils.save_image(grid,os.path.join(dir,"grid_%s.png"%(str(p))))
             except RuntimeError:
                 pass
+
+def visualize_prototype_with_spatial_maps(net, projectloader, num_classes, device, foldername, args: argparse.Namespace, prototype=None):
+    """
+    Visualize prototypes with their full spatial activation maps.
+    If prototype is None, visualize all prototypes. Otherwise, visualize just the specified prototype.
+    """
+    print("Visualizing prototypes with spatial maps...", flush=True)
+    dir = os.path.join(args.log_dir, foldername)
+    if not os.path.exists(dir):
+        os.makedirs(dir)
+    
+    # Create a spatial maps directory
+    spatial_maps_dir = os.path.join(dir, "spatial_maps")
+    if not os.path.exists(spatial_maps_dir):
+        os.makedirs(spatial_maps_dir)
+    
+    # Dictionary to track prototype activations
+    saved = {}
+    tensors_per_prototype = {}
+    
+    # Initialize dictionaries
+    if prototype is None:
+        prototypes_to_visualize = range(net.module._num_prototypes)
+    else:
+        prototypes_to_visualize = [prototype]
+    
+    for p in prototypes_to_visualize:
+        prototype_dir = os.path.join(spatial_maps_dir, str(p))
+        if not os.path.exists(prototype_dir):
+            os.makedirs(prototype_dir)
+        saved[p] = 0
+        tensors_per_prototype[p] = []
+    
+    patchsize, skip = get_patch_size(args)
+    imgs = projectloader.dataset.imgs
+    
+    # Skip some images for visualization to speed up the process
+    if len(imgs)/num_classes < 10:
+        skip_img = 10
+    elif len(imgs)/num_classes < 50:
+        skip_img = 5
+    else:
+        skip_img = 2
+    
+    print(f"Every {skip_img} image is skipped to speed up visualization", flush=True)
+    
+    # Make sure the model is in evaluation mode
+    net.eval()
+    
+    # Show progress on progress bar
+    img_iter = tqdm(enumerate(projectloader),
+                   total=len(projectloader),
+                   mininterval=100.,
+                   desc='Visualizing with spatial maps',
+                   ncols=0)
+    
+    # Iterate through the data
+    images_seen_before = 0
+    for i, (xs, ys) in img_iter: 
+        if i % skip_img == 0:
+            images_seen_before += xs.shape[0]
+            continue
+        
+        xs, ys = xs.to(device), ys.to(device)
+        
+        # Forward pass to get spatial activation maps
+        with torch.no_grad():
+            softmaxes, pooled, _ = net(xs, inference=True) 
+        
+        # Process each prototype
+        for p in prototypes_to_visualize:
+            # Get the max activation value for this prototype
+            max_val = pooled[0, p].item()
+            
+            # Skip if activation is too low
+            if max_val < 0.3:
+                continue
+            
+            # Get the full spatial activation map for this prototype
+            spatial_map = softmaxes[0, p].cpu().numpy()
+            
+            # Save the spatial map as a numpy file
+            img_to_open = imgs[images_seen_before]
+            if isinstance(img_to_open, tuple) or isinstance(img_to_open, list):
+                imglabel = img_to_open[1]
+                img_to_open = img_to_open[0]
+            
+            # Get image basename
+            img_basename = os.path.splitext(os.path.basename(img_to_open))[0]
+            
+            # Save the raw spatial map as numpy file
+            spatial_map_path = os.path.join(spatial_maps_dir, str(p), f"{img_basename}_spatial_map.npy")
+            np.save(spatial_map_path, spatial_map)
+            
+            # Load and resize the original image
+            image = transforms.Resize(size=(args.image_size, args.image_size))(Image.open(img_to_open).convert("RGB"))
+            img_tensor = transforms.ToTensor()(image).unsqueeze_(0)
+            
+            # Create heatmap visualizations
+            # Resize the spatial map to match the image size
+            spatial_map_resized = cv2.resize(spatial_map, (args.image_size, args.image_size), interpolation=cv2.INTER_CUBIC)
+            
+            # Normalize the spatial map for visualization
+            spatial_map_norm = spatial_map_resized - np.min(spatial_map_resized)
+            if np.max(spatial_map_norm) > 0:
+                spatial_map_norm = spatial_map_norm / np.max(spatial_map_norm)
+            
+            # Convert to uint8 for colormap application
+            spatial_map_uint8 = np.uint8(255 * spatial_map_norm)
+            
+            # Create colormap heatmap
+            heatmap = cv2.applyColorMap(spatial_map_uint8, cv2.COLORMAP_JET)
+            heatmap = np.float32(heatmap) / 255
+            heatmap = heatmap[...,::-1]  # OpenCV's BGR to RGB
+            
+            # Create overlay image
+            img_np = img_tensor.squeeze().numpy().transpose(1, 2, 0)
+            overlay_img = 0.6 * img_np + 0.4 * heatmap
+            
+            # Save heatmap and overlay images
+            heatmap_path = os.path.join(spatial_maps_dir, str(p), f"{img_basename}_heatmap.png")
+            overlay_path = os.path.join(spatial_maps_dir, str(p), f"{img_basename}_overlay.png")
+            
+            plt.imsave(fname=heatmap_path, arr=heatmap, vmin=0.0, vmax=1.0)
+            plt.imsave(fname=overlay_path, arr=overlay_img, vmin=0.0, vmax=1.0)
+            
+            # Find the max activation location
+            max_per_prototype = np.max(spatial_map, axis=0)
+            max_idx_h = np.argmax(max_per_prototype)
+            max_idx_w = np.argmax(spatial_map[:, max_idx_h])
+            
+            # Compute image coordinates for the patch
+            h_coor_min, h_coor_max, w_coor_min, w_coor_max = get_img_coordinates(
+                args.image_size, softmaxes.shape, patchsize, skip, max_idx_h, max_idx_w)
+            
+            # Save image with bounding box
+            bbox_img = image.copy()
+            draw = D.Draw(bbox_img)
+            draw.rectangle([(w_coor_min, h_coor_min), (w_coor_max, h_coor_max)], outline='yellow', width=2)
+            
+            bbox_path = os.path.join(spatial_maps_dir, str(p), f"{img_basename}_bbox.png")
+            bbox_img.save(bbox_path)
+            
+            # Save the patch
+            img_tensor_patch = img_tensor[0, :, h_coor_min:h_coor_max, w_coor_min:w_coor_max]
+            patch_path = os.path.join(spatial_maps_dir, str(p), f"{img_basename}_patch.png")
+            torchvision.utils.save_image(img_tensor_patch, patch_path)
+            
+            # Save to tracking variables
+            saved[p] += 1
+            tensors_per_prototype[p].append(img_tensor_patch)
+        
+        images_seen_before += len(ys)
+    
+    # Create summary files with activation information
+    summary_path = os.path.join(spatial_maps_dir, "spatial_map_summary.json")
+    summary = {}
+    
+    for p in prototypes_to_visualize:
+        summary[str(p)] = {
+            "num_activations": saved[p],
+            "spatial_maps_dir": os.path.join(spatial_maps_dir, str(p))
+        }
+    
+    # Save summary as JSON
+    with open(summary_path, 'w') as f:
+        json.dump(summary, f, indent=2)
+    
+    # Create grid visualizations for each prototype
+    for p in prototypes_to_visualize:
+        if saved[p] > 0:
+            try:
+                grid = torchvision.utils.make_grid(tensors_per_prototype[p], nrow=8, padding=1)
+                grid_path = os.path.join(spatial_maps_dir, f"grid_{p}.png")
+                torchvision.utils.save_image(grid, grid_path)
+            except RuntimeError as e:
+                print(f"Error creating grid for prototype {p}: {e}")
+    
+    print(f"Saved spatial map visualizations to {spatial_maps_dir}")
+    return saved
